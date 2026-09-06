@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/* Cross-device and mobile viewport enhancements */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+}
+
+html, body {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Smooth touch scrolling momentum on iOS and Android */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Custom subtle scrollbars for touch & desktop mice */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.5);
+}
+
+@media print {
+  /* Reset background and sizing for full document printing */
+  html, body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    width: 100% !important;
+    overflow: visible !important;
+    font-size: 11pt !important;
+  }
+
+  /* Hide header bars, tabs, sidebars, floating controls, AI drawers, buttons, overlays */
+  header, nav, aside, footer,
+  .no-print,
+  button, select, input,
+  [role="dialog"],
+  .fixed,
+  .file-actions-menu {
+    display: none !important;
+  }
+
+  /* Target main container and force block layout */
+  .flex.flex-col.h-screen.w-screen,
+  .flex-1.overflow-hidden,
+  .flex-1.overflow-y-auto {
+    height: auto !important;
+    width: 100% !important;
+    position: static !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    display: block !important;
+  }
+
+  /* Document scroll container */
+  #doc-page-container {
+    overflow: visible !important;
+    height: auto !important;
+    position: static !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    background: #ffffff !important;
+  }
+
+  /* Ensure every single document page/slide breaks cleanly to a new printed page */
+  [id^="doc-page-"] {
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid-page !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 90vh !important;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    margin-bottom: 2rem !important;
+    padding: 2.5rem !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Maintain dark theme background for title slide if exact color adjust is supported */
+  [id^="doc-page-"].bg-\[\#1a2332\] {
+    background-color: #1a2332 !important;
+    color: #ffffff !important;
+  }
+
+  /* Formatting code blocks, tables, and callouts for print */
+  pre, code, table {
+    word-break: break-word !important;
+    white-space: pre-wrap !important;
+  }
+}

@@ -1,0 +1,51 @@
+services:
+  # 1. Teacher Portal Service (Uploads, organizes, and publishes course notes)
+  - type: web
+    name: course-teacher-portal
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORTAL_MODE
+        value: teacher
+      - key: VITE_PORTAL_MODE
+        value: teacher
+      - key: NODE_ENV
+        value: production
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
+        sync: false
+      - key: DATA_DIR
+        value: ./data
+
+  # 2. Student Portal Service (Interactive notes reading, AI Smart Tutor, quizzes)
+  - type: web
+    name: course-student-portal
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORTAL_MODE
+        value: student
+      - key: VITE_PORTAL_MODE
+        value: student
+      - key: NODE_ENV
+        value: production
+      - key: TEACHER_API_URL
+        fromService:
+          type: web
+          name: course-teacher-portal
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

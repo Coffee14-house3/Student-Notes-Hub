@@ -1,0 +1,6 @@
+{
+  "name": "Student Notes Hub",
+  "description": "Multi-subject educational portal featuring interactive notes reading, AI Smart Tutor, and quiz generator for students, paired with an instructor studio to upload, organize, and publish course notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
