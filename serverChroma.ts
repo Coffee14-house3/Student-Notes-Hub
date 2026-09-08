@@ -1,5 +1,5 @@
 import { CloudClient, EmbeddingFunction } from "chromadb";
-import { NoteDocument } from "./src/types";
+import { NoteDocument, CourseAnnouncement } from "./src/types";
 
 // ChromaDB Cloud configuration with fallback to provided credentials
 const CHROMA_API_KEY = process.env.CHROMA_API_KEY || "ck-GcQZtcjL4HkCUrRnhdhvLC632JVA9YXHYw7PVoDWj8AM";
@@ -200,6 +200,9 @@ export async function indexDocumentToChroma(doc: NoteDocument): Promise<number> 
   }
 
   try {
+    // 1. Remove any previous chunks for this document first to avoid duplicates
+    await deleteDocumentFromChroma(doc.id);
+
     const ids: string[] = [];
     const documents: string[] = [];
     const metadatas: Record<string, any>[] = [];
@@ -216,6 +219,7 @@ export async function indexDocumentToChroma(doc: NoteDocument): Promise<number> 
       ids.push(chunkId);
       documents.push(fullText);
       metadatas.push({
+        type: "note",
         docId: String(doc.id),
         docTitle: String(doc.title || ""),
         shortTitle: String(doc.shortTitle || ""),
@@ -226,6 +230,25 @@ export async function indexDocumentToChroma(doc: NoteDocument): Promise<number> 
         courseCode: String(doc.courseCode || "")
       });
     });
+
+    // Fallback if document has no markdown sections yet
+    if (ids.length === 0 && (doc.title || doc.description)) {
+      const chunkId = `doc_${doc.id}_overview`;
+      const fullText = `[Document: ${doc.title}] [Subject: ${doc.subject || "Course Note"}] [Unit: ${doc.unit || "Unit 1"}]\n${doc.description || doc.title}`;
+      ids.push(chunkId);
+      documents.push(fullText);
+      metadatas.push({
+        type: "note",
+        docId: String(doc.id),
+        docTitle: String(doc.title || ""),
+        shortTitle: String(doc.shortTitle || ""),
+        subject: String(doc.subject || "Course Material"),
+        unit: String(doc.unit || "Unit 1"),
+        pageNumber: 1,
+        sectionTitle: String(doc.title || "Overview"),
+        courseCode: String(doc.courseCode || "")
+      });
+    }
 
     if (ids.length > 0) {
       // Upsert in batches of 50
@@ -256,7 +279,7 @@ export async function indexAllDocumentsToChroma(docs: NoteDocument[]): Promise<n
     const count = await indexDocumentToChroma(doc);
     totalIndexed += count;
   }
-  console.log(`[ChromaDB] Total ${totalIndexed} chunks synchronized to Chroma Cloud database`);
+  console.log(`[ChromaDB] Total ${totalIndexed} note chunks synchronized to Chroma Cloud database`);
   return totalIndexed;
 }
 
@@ -265,10 +288,34 @@ export async function deleteDocumentFromChroma(docId: string): Promise<boolean> 
   if (!ready || !activeCollection) return false;
 
   try {
-    await activeCollection.delete({
-      where: { docId: { "$eq": String(docId) } }
-    });
-    console.log(`[ChromaDB] Deleted chunks for document "${docId}"`);
+    let deletedCount = 0;
+
+    // 1. First retrieve all chunk IDs belonging to this document to perform exact ID deletion
+    try {
+      const existing = await activeCollection.get({
+        where: { docId: { "$eq": String(docId) } }
+      });
+      if (existing && existing.ids && existing.ids.length > 0) {
+        await activeCollection.delete({ ids: existing.ids });
+        deletedCount += existing.ids.length;
+        console.log(`[ChromaDB] Successfully deleted ${deletedCount} vector chunks by ID for document "${docId}"`);
+        return true;
+      }
+    } catch (getErr: any) {
+      console.warn(`[ChromaDB] Notice during chunk lookup for docId ${docId}:`, getErr?.message);
+    }
+
+    // 2. Fallback: Direct where clause deletion
+    try {
+      await activeCollection.delete({
+        where: { docId: { "$eq": String(docId) } }
+      });
+      console.log(`[ChromaDB] Direct where-deleted chunks for document "${docId}"`);
+      return true;
+    } catch (whereErr: any) {
+      console.warn(`[ChromaDB] Direct where-delete notice for docId ${docId}:`, whereErr?.message);
+    }
+
     return true;
   } catch (err: any) {
     console.warn(`[ChromaDB] Error deleting chunks for docId ${docId}:`, err?.message);
@@ -276,7 +323,105 @@ export async function deleteDocumentFromChroma(docId: string): Promise<boolean> 
   }
 }
 
-export async function resetChromaDatabase(initialDocs: NoteDocument[]): Promise<number> {
+/**
+ * Index a Course Announcement into ChromaDB
+ */
+export async function indexAnnouncementToChroma(ann: CourseAnnouncement): Promise<boolean> {
+  const ready = await initChroma();
+  if (!ready || !activeCollection) {
+    console.warn("[ChromaDB] Cannot index announcement: Chroma collection unavailable");
+    return false;
+  }
+
+  try {
+    // 1. Remove previous chunk if exists
+    await deleteAnnouncementFromChroma(ann.id);
+
+    const chunkId = `ann_${ann.id}`;
+    const fullText = `[Course Announcement / Notice Board: ${ann.title}] [Author: ${ann.author || "Instructor"}] [Date: ${ann.date || ""}] ${ann.important ? "[Priority: High / Important]" : ""}${ann.relatedDocTitle ? ` [Related Material: ${ann.relatedDocTitle}]` : ""}\n\n${ann.content}`;
+
+    await activeCollection.upsert({
+      ids: [chunkId],
+      documents: [fullText],
+      metadatas: [{
+        type: "announcement",
+        annId: String(ann.id),
+        docId: `ann_${ann.id}`,
+        docTitle: `Notice: ${ann.title}`,
+        title: String(ann.title || ""),
+        author: String(ann.author || "Instructor"),
+        date: String(ann.date || ""),
+        important: Boolean(ann.important),
+        relatedDocId: String(ann.relatedDocId || ""),
+        relatedDocTitle: String(ann.relatedDocTitle || ""),
+        subject: "Course Announcements",
+        unit: "Notices"
+      }]
+    });
+
+    console.log(`[ChromaDB] Successfully indexed announcement "${ann.title}" (ID: ${ann.id}) into ChromaDB`);
+    return true;
+  } catch (err: any) {
+    console.error(`[ChromaDB] Error indexing announcement ${ann.id}:`, err?.message || err);
+    return false;
+  }
+}
+
+/**
+ * Delete a Course Announcement from ChromaDB
+ */
+export async function deleteAnnouncementFromChroma(annId: string): Promise<boolean> {
+  const ready = await initChroma();
+  if (!ready || !activeCollection) return false;
+
+  try {
+    const chunkId = `ann_${annId}`;
+    let deleted = false;
+
+    // 1. Delete by direct ID
+    try {
+      await activeCollection.delete({ ids: [chunkId] });
+      deleted = true;
+    } catch {}
+
+    // 2. Delete by metadata query in case metadata was mapped
+    try {
+      const existing = await activeCollection.get({
+        where: { annId: { "$eq": String(annId) } }
+      });
+      if (existing && existing.ids && existing.ids.length > 0) {
+        await activeCollection.delete({ ids: existing.ids });
+        deleted = true;
+      }
+    } catch {}
+
+    console.log(`[ChromaDB] Deleted announcement "${annId}" from ChromaDB`);
+    return deleted;
+  } catch (err: any) {
+    console.warn(`[ChromaDB] Error deleting announcement ${annId}:`, err?.message);
+    return false;
+  }
+}
+
+/**
+ * Index all announcements in bulk to ChromaDB
+ */
+export async function indexAllAnnouncementsToChroma(anns: CourseAnnouncement[]): Promise<number> {
+  const ready = await initChroma();
+  if (!ready || !activeCollection) return 0;
+
+  let totalIndexed = 0;
+  for (const ann of anns) {
+    if (ann && ann.id) {
+      const ok = await indexAnnouncementToChroma(ann);
+      if (ok) totalIndexed++;
+    }
+  }
+  console.log(`[ChromaDB] Total ${totalIndexed} announcements synchronized to Chroma Cloud database`);
+  return totalIndexed;
+}
+
+export async function resetChromaDatabase(initialDocs: NoteDocument[], initialAnns: CourseAnnouncement[] = []): Promise<number> {
   try {
     if (!chromaClient) {
       await initChroma();
@@ -289,7 +434,9 @@ export async function resetChromaDatabase(initialDocs: NoteDocument[]): Promise<
       isInitialized = false;
     }
     await initChroma();
-    return await indexAllDocumentsToChroma(initialDocs);
+    const docCount = await indexAllDocumentsToChroma(initialDocs);
+    const annCount = await indexAllAnnouncementsToChroma(initialAnns);
+    return docCount + annCount;
   } catch (err: any) {
     console.error("[ChromaDB] Error during reset:", err?.message);
     return 0;

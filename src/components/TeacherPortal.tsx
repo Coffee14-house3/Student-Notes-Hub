@@ -112,7 +112,7 @@ export const TeacherPortal: React.FC<Props> = ({
       .then(res => res.json())
       .then(data => setChromaStatus(data))
       .catch(() => {});
-  }, [documents.length]);
+  }, [documents.length, announcements.length]);
 
   const handleSyncChroma = async () => {
     setIsSyncingChroma(true);

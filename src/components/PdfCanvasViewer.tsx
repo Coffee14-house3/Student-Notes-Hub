@@ -53,7 +53,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
         containerRef.current.scrollTop = 0;
       }
     } else {
-      const pageEl = document.getElementById(`doc-page-${activePage}`);
+      const pageEl = window.document.getElementById(`doc-page-${activePage}`);
       if (pageEl) {
         pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
         pageEl.classList.add("ring-4", "ring-amber-500", "ring-offset-4", "transition-all", "duration-300");

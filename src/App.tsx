@@ -57,8 +57,18 @@ export default function App() {
 
   // Render dedicated Student Application or Teacher Application
   if (portalMode === "teacher") {
-    return <TeacherApp isStandalone={isStandalone} />;
+    return (
+      <TeacherApp 
+        isStandalone={isStandalone} 
+        onSwitchPortal={(mode) => setPortalMode(mode)} 
+      />
+    );
   }
 
-  return <StudentApp isStandalone={isStandalone} />;
+  return (
+    <StudentApp 
+      isStandalone={isStandalone} 
+      onSwitchPortal={(mode) => setPortalMode(mode)} 
+    />
+  );
 }

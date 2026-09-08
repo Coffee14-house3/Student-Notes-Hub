@@ -6,7 +6,7 @@ import { FlashcardsQuiz } from "./FlashcardsQuiz";
 import { SearchModal } from "./SearchModal";
 import { ExportModal } from "./ExportModal";
 import { AiAssistantModal } from "./AiAssistantModal";
-import { GraduationCap, BookOpen, Sparkles, Share2, Check, ArrowLeft } from "lucide-react";
+import { GraduationCap, BookOpen, Share2, Check, ArrowLeft } from "lucide-react";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -19,9 +19,10 @@ import {
 
 interface Props {
   isStandalone?: boolean;
+  onSwitchPortal?: (mode: "student" | "teacher") => void;
 }
 
-export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
+export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPortal }) => {
   const [activeView, setActiveView] = useState<string>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -61,36 +62,102 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
     }
   }, [announcements]);
 
-  // Fetch published documents from backend with IndexedDB cache fallback and smart server sync
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
+  // Core synchronization: Queries the backend/teacher portal and purges any notes deleted by the teacher
+  const handleSyncWithTeacher = async (isManual = false) => {
+    if (isManual) setIsSyncing(true);
+    try {
+      let serverDocs: NoteDocument[] | null = null;
+
+      // 1. Try local server endpoint
+      try {
+        const res = await fetch(`/api/documents?role=student&_t=${Date.now()}`, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.documents)) {
+            serverDocs = data.documents;
+          }
+        }
+      } catch (e) {
+        console.warn("[StudentApp] Local fetch failed:", e);
+      }
+
+      // 2. If local server returned empty or failed and we are on a remote client, try remote Teacher directly
+      if (
+        (!serverDocs || serverDocs.length === 0) &&
+        typeof window !== "undefined" &&
+        !window.location.hostname.includes("course-teacher-portal")
+      ) {
+        try {
+          const remoteRes = await fetch(
+            `https://course-teacher-portal.onrender.com/api/documents?role=student&_t=${Date.now()}`,
+            { cache: "no-store" }
+          );
+          if (remoteRes.ok) {
+            const remoteData = await remoteRes.json();
+            if (Array.isArray(remoteData.documents) && remoteData.documents.length > 0) {
+              serverDocs = remoteData.documents;
+            }
+          }
+        } catch {
+          // ignore fallback error
+        }
+      }
+
+      // 3. When authoritative list is received from server:
+      if (serverDocs !== null) {
+        const publishedOnly = serverDocs.filter(d => d.isPublished !== false);
+        // syncDocumentsWithServer strictly purges any documents that are no longer in publishedOnly
+        const synced = await syncDocumentsWithServer(publishedOnly, "student");
+        setDocuments(synced);
+
+        if (isManual) {
+          setSyncStatus(`Synced • ${synced.length} active note${synced.length === 1 ? "" : "s"}`);
+          setTimeout(() => setSyncStatus(null), 4000);
+        }
+      }
+    } catch (err) {
+      console.warn("[StudentApp] Sync failed:", err);
+      if (isManual) {
+        setSyncStatus("Sync failed (offline or server restarting)");
+        setTimeout(() => setSyncStatus(null), 4000);
+      }
+    } finally {
+      if (isManual) setIsSyncing(false);
+      isInitializedRef.current = true;
+    }
+  };
+
+  // Fetch published documents from backend and keep in sync
   useEffect(() => {
     let isMounted = true;
-    const fetchDocs = async () => {
-      // 1. Load local documents first
+    const initialLoad = async () => {
+      // 1. Initial cached display for 0ms load
       const localDocs = await loadDocumentsFromStorage();
       if (isMounted && localDocs.length > 0) {
         setDocuments(localDocs.filter(d => d.isPublished !== false));
       }
-
-      // 2. Fetch latest published documents from backend and perform smart sync
-      try {
-        const res = await fetch("/api/documents?role=student");
-        if (res.ok) {
-          const data = await res.json();
-          const serverDocs = Array.isArray(data.documents) ? data.documents : [];
-          const merged = await syncDocumentsWithServer(serverDocs, "student");
-          if (isMounted && merged.length > 0) {
-            setDocuments(merged.filter(d => d.isPublished !== false));
-          }
-        }
-      } catch {
-        // fallback to local storage
-      } finally {
-        isInitializedRef.current = true;
-      }
+      // 2. Authoritative sync with server to prune deleted notes
+      await handleSyncWithTeacher(false);
     };
 
-    fetchDocs();
-    return () => { isMounted = false; };
+    initialLoad();
+
+    // Auto-sync whenever tab gains focus (e.g. after teacher modified files) or every 20s
+    const handleFocus = () => handleSyncWithTeacher(false);
+    window.addEventListener("focus", handleFocus);
+    const interval = setInterval(() => handleSyncWithTeacher(false), 20000);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("focus", handleFocus);
+      clearInterval(interval);
+    };
   }, []);
 
   // Fetch announcements from backend
@@ -226,14 +293,6 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
           )}
 
           <button
-            onClick={() => setAiChatOpen(true)}
-            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">AI Smart Tutor</span>
-          </button>
-
-          <button
             onClick={handleCopyShareLink}
             className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
             title="Copy shareable link"
@@ -273,6 +332,9 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAiTutor={() => setAiChatOpen(true)}
             isStandalone={isStandalone}
+            onSyncWithTeacher={() => handleSyncWithTeacher(true)}
+            isSyncing={isSyncing}
+            syncStatus={syncStatus}
           />
         ) : (
           <DocumentModalViewer
@@ -307,7 +369,10 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
             onUpdateSettings={setReadingSettings}
             bookmarks={bookmarks}
             onToggleBookmark={handleToggleBookmark}
+            isAiChatOpen={aiChatOpen}
             onOpenAiChat={() => setAiChatOpen(true)}
+            onCloseAiChat={() => setAiChatOpen(false)}
+            onToggleAiChat={() => setAiChatOpen(prev => !prev)}
             onOpenQuiz={() => {
               if (currentDocument) {
                 setQuizTargetDocId(currentDocument.id);
@@ -319,8 +384,8 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true }) => {
         )}
       </main>
 
-      {/* AI Smart Tutor Modal */}
-      {aiChatOpen && (
+      {/* AI Smart Tutor Modal (Only rendered as floating modal when on dashboard/portal view) */}
+      {aiChatOpen && (activeView === "dashboard" || !currentDocument) && (
         <AiAssistantModal
           isOpen={aiChatOpen}
           onClose={() => setAiChatOpen(false)}

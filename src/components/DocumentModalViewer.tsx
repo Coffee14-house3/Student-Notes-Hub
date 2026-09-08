@@ -57,7 +57,7 @@ interface Props {
 export const DocumentModalViewer: React.FC<Props> = ({
   notes: propsNotes,
   allDocuments,
-  document,
+  document: propDocument,
   isOpen = true,
   onClose,
   activeView: propsActiveView,
@@ -89,15 +89,40 @@ export const DocumentModalViewer: React.FC<Props> = ({
   if (isOpen === false) return null;
 
   const notes = useMemo<NoteDocument[]>(() => {
-    const list = propsNotes || allDocuments || (document ? [document] : []);
+    const list = propsNotes || allDocuments || (propDocument ? [propDocument] : []);
     return Array.isArray(list) ? list : [];
-  }, [propsNotes, allDocuments, document]);
+  }, [propsNotes, allDocuments, propDocument]);
 
   const [internalActiveView, setInternalActiveView] = useState<string>(() => {
-    return propsActiveView || document?.id || notes[0]?.id || "dashboard";
+    return propsActiveView || propDocument?.id || notes[0]?.id || "dashboard";
   });
 
-  const activeView = propsActiveView || (document ? document.id : internalActiveView) || notes[0]?.id || "";
+  // Local state for AI side-by-side panel if not externally controlled
+  const [internalAiChatOpen, setInternalAiChatOpen] = useState<boolean>(false);
+  const effectiveAiChatOpen = isAiChatOpen !== undefined ? isAiChatOpen : internalAiChatOpen;
+
+  const handleToggleAiPanel = () => {
+    setInternalAiChatOpen(prev => !prev);
+    if (onToggleAiChat) {
+      onToggleAiChat();
+    } else if (onOpenAiChat && onCloseAiChat) {
+      if (effectiveAiChatOpen) onCloseAiChat();
+      else onOpenAiChat();
+    } else if (onOpenAiChat) {
+      onOpenAiChat();
+    }
+  };
+
+  const handleCloseAiPanel = () => {
+    setInternalAiChatOpen(false);
+    if (onCloseAiChat) {
+      onCloseAiChat();
+    } else if (onToggleAiChat && effectiveAiChatOpen) {
+      onToggleAiChat();
+    }
+  };
+
+  const activeView = propsActiveView || (propDocument ? propDocument.id : internalActiveView) || notes[0]?.id || "";
 
   const setActiveView = (view: string) => {
     if (view === "dashboard" && onClose) {
@@ -109,6 +134,52 @@ export const DocumentModalViewer: React.FC<Props> = ({
       propsSetActiveView(view);
     } else if (onSelectDocument) {
       onSelectDocument(view);
+    }
+  };
+
+  const handleCloseViewer = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      setActiveView("dashboard");
+    }
+  };
+
+  // Track closed document tab IDs
+  const [closedTabIds, setClosedTabIds] = useState<Set<string>>(new Set());
+
+  // Automatically ensure the currently active document tab is not closed
+  useEffect(() => {
+    if (activeView && closedTabIds.has(activeView)) {
+      setClosedTabIds(prev => {
+        const next = new Set(prev);
+        next.delete(activeView);
+        return next;
+      });
+    }
+  }, [activeView, closedTabIds]);
+
+  // Handle closing a single document tab
+  const handleCloseTab = (e: React.MouseEvent, docId: string) => {
+    e.stopPropagation();
+    
+    setClosedTabIds(prev => {
+      const next = new Set(prev);
+      next.add(docId);
+      return next;
+    });
+
+    // If the closed tab was currently active, switch to another visible tab or close viewer
+    if (activeView === docId) {
+      const remainingDocs = notes.filter(d => d.id !== docId && !closedTabIds.has(d.id));
+      if (remainingDocs.length > 0) {
+        const docIdx = notes.findIndex(d => d.id === docId);
+        const nextDoc = remainingDocs.find((_, i) => i >= docIdx) || remainingDocs[remainingDocs.length - 1];
+        setActiveView(nextDoc.id);
+        setCurrentPage(1);
+      } else {
+        handleCloseViewer();
+      }
     }
   };
 
@@ -148,6 +219,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [showOutlineDrawer, setShowOutlineDrawer] = useState<boolean>(false);
   const pageContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+  const scrollTimeoutRef = useRef<any>(null);
 
   // Helper to expand any document into its full list of pages matching doc.pageCount
   const generateFullSectionsForDoc = (doc: NoteDocument): NoteSection[] => {
@@ -344,15 +417,55 @@ export const DocumentModalViewer: React.FC<Props> = ({
     if (sec) {
       setActiveSectionId(sec.id);
     }
-    const pageEl = document.getElementById(`doc-page-${newPage}`);
+
+    const container = pageContainerRef.current;
+    if (!container) return;
+
+    if (!isContinuousScroll) {
+      // In Single Page mode: reset container scroll to top for the selected slide
+      container.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    // In Continuous All Pages mode:
+    const pageEl = window.document.getElementById(`doc-page-${newPage}`);
     if (pageEl) {
-      pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      isProgrammaticScrollRef.current = true;
+
+      const scale = (zoomLevel || 100) / 100;
+      const containerRect = container.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+      const relativeTop = (pageRect.top - containerRect.top) / scale;
+      const targetScrollTop = container.scrollTop + relativeTop - 20;
+
+      container.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "smooth"
+      });
+
+      // Secondary scrollIntoView call
+      try {
+        pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {
+        // fallback
+      }
+
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 750);
+
       pageEl.classList.add("ring-4", "ring-amber-500", "ring-offset-4", "transition-all", "duration-300");
       setTimeout(() => {
         pageEl.classList.remove("ring-4", "ring-amber-500", "ring-offset-4");
       }, 2500);
-    } else if (pageContainerRef.current) {
-      pageContainerRef.current.scrollTop = 0;
+    } else {
+      // Fallback: estimate position
+      const estHeight = 720;
+      container.scrollTo({
+        top: Math.max(0, (newPage - 1) * estHeight),
+        behavior: "smooth"
+      });
     }
   };
 
@@ -361,13 +474,14 @@ export const DocumentModalViewer: React.FC<Props> = ({
     if (!isContinuousScroll || !pageContainerRef.current) return;
 
     const handleScroll = () => {
+      if (isProgrammaticScrollRef.current) return;
       const container = pageContainerRef.current;
       if (!container) return;
 
       const containerTop = container.getBoundingClientRect().top;
 
       for (let i = 0; i < activeSections.length; i++) {
-        const pageEl = document.getElementById(`doc-page-${i + 1}`);
+        const pageEl = window.document.getElementById(`doc-page-${i + 1}`);
         if (pageEl) {
           const rect = pageEl.getBoundingClientRect();
           if (rect.top <= containerTop + 250 && rect.bottom >= containerTop + 100) {
@@ -381,7 +495,10 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
     const containerEl = pageContainerRef.current;
     containerEl.addEventListener("scroll", handleScroll, { passive: true });
-    return () => containerEl.removeEventListener("scroll", handleScroll);
+    return () => {
+      containerEl.removeEventListener("scroll", handleScroll);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
   }, [isContinuousScroll, activeSections, setActiveSectionId]);
 
   const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -393,10 +510,17 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
   const currentSection = activeSections[currentPage - 1] || activeSections[0];
 
-  // Key navigation (Left / Right arrow for pages)
+  // Key navigation (Left / Right arrow for pages, Esc to close)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
+      if (window.document.activeElement?.tagName === "INPUT" || window.document.activeElement?.tagName === "TEXTAREA") {
+        return;
+      }
+      if (e.key === "Escape") {
+        if (showQuizModal || showSummaryModal || showRenameModal || showDetailsModal || showMergeModal || showTtsPlayer || showOutlineDrawer) {
+          return;
+        }
+        handleCloseViewer();
         return;
       }
       if (e.key === "ArrowRight" || e.key === "PageDown") {
@@ -407,61 +531,97 @@ export const DocumentModalViewer: React.FC<Props> = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentPage, totalPages]);
+  }, [currentPage, totalPages, showQuizModal, showSummaryModal, showRenameModal, showDetailsModal, showMergeModal, showTtsPlayer, showOutlineDrawer]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#1e1e1e] text-slate-100 overflow-hidden font-sans select-text">
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#1e1e1e] text-slate-100 overflow-hidden font-sans select-text">
       {/* Top Horizontal PDF Browser Tab Strip */}
-      <div className="bg-[#18181c] border-b border-[#33333d] px-2 pt-1.5 flex items-center gap-1 overflow-x-auto scrollbar-none shrink-0 text-xs z-30">
-        {/* Unit All Files Tab */}
-        <button
-          onClick={() => {
-            setActiveView(`all-unit-${effectiveUnit}`);
-            setCurrentPage(1);
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg transition-all border-t border-x shrink-0 text-xs font-semibold cursor-pointer ${
-            isAllFilesView
-              ? "bg-[#28282c] text-amber-400 border-[#404048] font-bold shadow-xs"
-              : "bg-[#1c1c20] text-slate-400 hover:text-amber-300 border-transparent hover:bg-[#232328]"
-          }`}
-          title={`View all ${effectiveUnit} notes in combined sequence`}
-        >
-          <Layers className="w-3.5 h-3.5 text-amber-400" />
-          <span>All {effectiveUnit} Notes</span>
-        </button>
+      <div className="bg-[#18181c] border-b border-[#33333d] flex items-center justify-between shrink-0 text-xs z-30">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none px-2 pt-1.5 flex-1 min-w-0">
+          {/* Unit All Files Tab */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveView(`all-unit-${effectiveUnit}`);
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg transition-all border-t border-x shrink-0 text-xs font-semibold cursor-pointer ${
+              isAllFilesView
+                ? "bg-[#28282c] text-amber-400 border-[#404048] font-bold shadow-xs"
+                : "bg-[#1c1c20] text-slate-400 hover:text-amber-300 border-transparent hover:bg-[#232328]"
+            }`}
+            title={`View all ${effectiveUnit} notes in combined sequence`}
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span>All {effectiveUnit} Notes</span>
+          </button>
 
-        {notes.map((doc) => {
-          const isActive = doc.id === activeView;
-          return (
-            <button
-              key={doc.id}
-              onClick={() => {
-                setActiveView(doc.id);
-                setCurrentPage(1);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg transition-all border-t border-x shrink-0 text-xs font-medium cursor-pointer max-w-[180px] sm:max-w-[220px] ${
-                isActive
-                  ? "bg-[#28282c] text-white border-[#404048] font-bold shadow-xs"
-                  : "bg-[#1c1c20] text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#232328]"
-              }`}
-            >
-              <FileText className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-amber-400" : "text-slate-400"}`} />
-              <span className="truncate">{doc.shortTitle || doc.title}</span>
-              {doc.unit && (
-                <span className="text-[9px] text-amber-400/90 bg-amber-500/10 px-1 py-0.2 rounded shrink-0">
-                  {doc.unit}
-                </span>
-              )}
-            </button>
-          );
-        })}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-[#28282c] rounded-md transition-colors shrink-0 ml-1 cursor-pointer"
-          title="Open / Add Document"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
+          {notes.filter(doc => !closedTabIds.has(doc.id)).map((doc) => {
+            const isActive = doc.id === activeView;
+            return (
+              <div
+                key={doc.id}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => {
+                  setActiveView(doc.id);
+                  setCurrentPage(1);
+                }}
+                className={`group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-t-lg transition-all border-t border-x shrink-0 text-xs font-medium cursor-pointer max-w-[190px] sm:max-w-[240px] select-none ${
+                  isActive
+                    ? "bg-[#28282c] text-white border-[#404048] font-bold shadow-xs"
+                    : "bg-[#1c1c20] text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#232328]"
+                }`}
+                title={doc.title}
+              >
+                <FileText className={`w-3.5 h-3.5 shrink-0 ${isActive ? "text-amber-400" : "text-slate-400"}`} />
+                <span className="truncate">{doc.shortTitle || doc.title}</span>
+                {doc.unit && (
+                  <span className="text-[9px] text-amber-400/90 bg-amber-500/10 px-1 py-0.2 rounded shrink-0">
+                    {doc.unit}
+                  </span>
+                )}
+                {/* Close Tab 'x' Button */}
+                <button
+                  type="button"
+                  onClick={(e) => handleCloseTab(e, doc.id)}
+                  className={`ml-1 p-0.5 rounded hover:bg-slate-700/90 hover:text-red-400 transition-colors shrink-0 cursor-pointer ${
+                    isActive
+                      ? "text-slate-400 hover:text-red-300 opacity-90 hover:opacity-100"
+                      : "text-slate-500 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                  }`}
+                  title={`Close ${doc.shortTitle || doc.title}`}
+                  aria-label={`Close ${doc.title}`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-[#28282c] rounded-md transition-colors shrink-0 ml-1 cursor-pointer"
+            title="Open / Add Document"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Right Corner: Close File / Exit Viewer button pinned to right edge of tab bar */}
+        <div className="flex items-center px-2 shrink-0 border-l border-[#33333d]/60 bg-[#18181c]">
+          <button
+            type="button"
+            onClick={handleCloseViewer}
+            className="flex items-center gap-1 px-2 py-1 text-slate-400 hover:text-red-400 hover:bg-red-500/15 rounded-md transition-all cursor-pointer font-semibold text-xs border border-transparent hover:border-red-500/30"
+            title="Close file and return to notes dashboard (Esc)"
+            aria-label="Close file and return to notes dashboard"
+          >
+            <X className="w-3.5 h-3.5 text-slate-400 hover:text-red-400" />
+            <span className="hidden sm:inline">Close</span>
+          </button>
+        </div>
       </div>
 
       {/* Top Document Preview Bar */}
@@ -469,7 +629,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
         {/* Left: Dashboard Button, Sidebar Toggle, Document Icon & Note Dropdown */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 max-w-full overflow-x-auto">
           <button
-            onClick={() => setActiveView("dashboard")}
+            type="button"
+            onClick={handleCloseViewer}
             className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-lg text-[11px] sm:text-xs flex items-center gap-1 sm:gap-1.5 transition-all shadow-md shrink-0 cursor-pointer"
             title="Return to Main Dashboard"
           >
@@ -548,19 +709,32 @@ export const DocumentModalViewer: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Right Tools: Ask AI */}
+        {/* Right Tools: Ask AI & Close Button */}
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={onToggleAiChat || onOpenAiChat}
+            type="button"
+            onClick={handleToggleAiPanel}
             className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-extrabold transition-all shadow-md cursor-pointer ${
-              isAiChatOpen 
+              effectiveAiChatOpen 
                 ? "bg-amber-400 text-slate-950 ring-2 ring-amber-300/60 font-extrabold" 
                 : "bg-amber-500 hover:bg-amber-400 text-slate-950"
             }`}
-            title={isAiChatOpen ? "Close AI Panel" : "Ask AI Tutor about this document"}
+            title={effectiveAiChatOpen ? "Close AI Side Panel" : "Ask AI Tutor (Side-by-side with notes)"}
           >
             <Sparkles className="w-3.5 h-3.5" />
             <span>Ask AI</span>
+          </button>
+
+          {/* Close Document Viewer Button */}
+          <button
+            type="button"
+            onClick={handleCloseViewer}
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md bg-[#2d2d32] hover:bg-red-500/20 text-slate-200 hover:text-red-300 border border-[#3e3e46] hover:border-red-500/40 cursor-pointer group"
+            title="Close file and return to notes portal (Esc)"
+            aria-label="Close document"
+          >
+            <X className="w-3.5 h-3.5 text-slate-400 group-hover:text-red-400 transition-colors" />
+            <span>Close</span>
           </button>
         </div>
       </header>
@@ -681,7 +855,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
         {/* Center Canvas / Document Paper Sheet */}
         <main 
           ref={pageContainerRef}
-          className="flex-1 overflow-auto bg-[#e5e7eb] dark:bg-[#1a1a1e] p-2 sm:p-8 flex justify-center items-start scroll-smooth relative"
+          className="flex-1 min-w-0 overflow-auto bg-[#e5e7eb] dark:bg-[#1a1a1e] p-2 sm:p-8 flex justify-center items-start relative"
         >
           {activeView === "quiz" ? (
             <div className="w-full max-w-3xl my-6">
@@ -791,19 +965,19 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
         </main>
 
-        {/* Right Side Panel: AI AWS Tutor (Full Screen Overlay on Mobile, Docked Side Panel on Desktop) */}
+        {/* Right Side Panel: AI AWS Tutor (Slide-in on Mobile, True Side-by-Side Docked Panel on Tablet & Desktop) */}
         <>
           {/* Dark Backdrop for Mobile */}
-          {isAiChatOpen && (
+          {effectiveAiChatOpen && (
             <div 
-              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-30 sm:hidden"
-              onClick={onCloseAiChat || onOpenAiChat}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 sm:hidden"
+              onClick={handleCloseAiPanel}
             />
           )}
-          <aside className={`${isAiChatOpen ? "flex" : "hidden"} fixed inset-x-0 bottom-0 top-14 z-40 sm:static sm:z-20 w-full sm:w-80 lg:w-96 border-t sm:border-t-0 sm:border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-[calc(100vh-3.5rem)] sm:h-full flex-col shadow-2xl transition-all`}>
+          <aside className={`${effectiveAiChatOpen ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full sm:static sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
             <AiAssistantModal
-              isOpen={isAiChatOpen}
-              onClose={onCloseAiChat || onOpenAiChat}
+              isOpen={effectiveAiChatOpen}
+              onClose={handleCloseAiPanel}
               contextText={activeSections.map(s => `[Page ${s.pageNumber} - ${s.title}]: ${s.contentMarkdown}`).join("\n\n")}
               activeDocument={activeDoc}
               isEmbedded={true}
@@ -815,7 +989,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
       {/* Floating Bottom Control Toolbar Pill (Hidden on Mobile when AI Chat is Open to avoid blocking input) */}
       {activeView !== "quiz" && (
-        <div className={`fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] sm:bottom-6 left-1/2 -translate-x-1/2 z-30 bg-[#2c2c2ce6] backdrop-blur-md text-white border border-[#444] rounded-full px-2.5 py-1.5 sm:px-5 sm:py-2.5 items-center gap-1.5 sm:gap-4 shadow-2xl text-xs select-none max-w-[96vw] whitespace-nowrap ${isAiChatOpen ? "hidden sm:flex" : "flex"}`}>
+        <div className={`fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] sm:bottom-6 left-1/2 -translate-x-1/2 z-30 bg-[#2c2c2ce6] backdrop-blur-md text-white border border-[#444] rounded-full px-2.5 py-1.5 sm:px-5 sm:py-2.5 items-center gap-1.5 sm:gap-4 shadow-2xl text-xs select-none max-w-[96vw] whitespace-nowrap ${effectiveAiChatOpen ? "hidden sm:flex" : "flex"}`}>
           {/* Page Jump Controls */}
           <div className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
             <button
@@ -883,17 +1057,36 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
           {/* View Mode Toggle: All Pages / Single Page */}
           <button
-            onClick={() => setIsContinuousScroll(!isContinuousScroll)}
-            className={`px-2 py-1 rounded flex items-center gap-1.5 transition-all cursor-pointer ${
+            onClick={() => {
+              const nextMode = !isContinuousScroll;
+              setIsContinuousScroll(nextMode);
+              setTimeout(() => {
+                const container = pageContainerRef.current;
+                if (!container) return;
+                if (!nextMode) {
+                  container.scrollTo({ top: 0, behavior: "smooth" });
+                } else {
+                  const pageEl = window.document.getElementById(`doc-page-${currentPage}`);
+                  if (pageEl) {
+                    const scale = (zoomLevel || 100) / 100;
+                    const cRect = container.getBoundingClientRect();
+                    const pRect = pageEl.getBoundingClientRect();
+                    const relTop = (pRect.top - cRect.top) / scale;
+                    container.scrollTo({ top: Math.max(0, container.scrollTop + relTop - 20), behavior: "smooth" });
+                  }
+                }
+              }, 50);
+            }}
+            className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-all cursor-pointer ${
               isContinuousScroll
                 ? "bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30"
-                : "hover:bg-white/10 text-slate-300"
+                : "bg-slate-700/60 text-slate-200 border border-slate-600 hover:bg-slate-700"
             }`}
-            title={isContinuousScroll ? "Switch to Single Page View" : "Switch to Continuous All-Pages View"}
+            title={isContinuousScroll ? "Currently showing all pages. Click for single-page presentation" : "Currently in single slide view. Click to view all pages stacked"}
           >
             <Layers className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-[11px] font-semibold">
-              {isContinuousScroll ? "All Pages" : "Single Page"}
+              {isContinuousScroll ? "All Pages" : "Single Slide"}
             </span>
           </button>
 

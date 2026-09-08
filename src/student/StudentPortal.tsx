@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { 
-  BookOpen, Sparkles, HelpCircle, Search, 
+  BookOpen, HelpCircle, Search, 
   Tag, Clock, ChevronRight, Layers, FileText, ArrowRight,
-  GraduationCap, Bell, ArrowUpRight, Award, Folder
+  GraduationCap, Bell, ArrowUpRight, Award, Folder, RefreshCw, CheckCircle2
 } from "lucide-react";
 import { NoteDocument, CourseAnnouncement } from "../types";
 
@@ -12,8 +12,11 @@ interface Props {
   onSelectDocument: (docId: string, openAiChat?: boolean) => void;
   onOpenQuiz: (docId?: string) => void;
   onOpenSearch: () => void;
-  onOpenAiTutor: () => void;
+  onOpenAiTutor?: () => void;
   isStandalone?: boolean;
+  onSyncWithTeacher?: () => Promise<void> | void;
+  isSyncing?: boolean;
+  syncStatus?: string | null;
 }
 
 export const StudentPortal: React.FC<Props> = ({
@@ -23,7 +26,10 @@ export const StudentPortal: React.FC<Props> = ({
   onOpenQuiz,
   onOpenSearch,
   onOpenAiTutor,
-  isStandalone = false
+  isStandalone = false,
+  onSyncWithTeacher,
+  isSyncing = false,
+  syncStatus = null
 }) => {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>("all");
@@ -89,12 +95,24 @@ export const StudentPortal: React.FC<Props> = ({
                 Course Materials & Study Hub
               </h1>
               <p className="text-sm sm:text-base text-slate-400 max-w-2xl">
-                Browse verified course notes uploaded by your instructor. Read materials, practice quizzes, and ask questions using the AI Smart Tutor.
+                Browse verified course notes uploaded by your instructor. Read materials and practice interactive quizzes.
               </p>
             </div>
 
             {/* Quick Action Buttons */}
             <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+              {onSyncWithTeacher && (
+                <button
+                  onClick={() => onSyncWithTeacher()}
+                  disabled={isSyncing}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 hover:border-amber-500/50 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  title="Sync and refresh notes from the instructor portal"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isSyncing ? "animate-spin" : ""}`} />
+                  <span>{isSyncing ? "Syncing..." : "Sync Notes"}</span>
+                </button>
+              )}
+
               <button
                 onClick={() => onOpenQuiz()}
                 className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-sm hover:border-amber-500/50"
@@ -104,14 +122,12 @@ export const StudentPortal: React.FC<Props> = ({
                 <span>Practice Quiz</span>
               </button>
 
-              <button
-                onClick={onOpenAiTutor}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-md hover:shadow-amber-500/20"
-                title="Ask questions grounded in uploaded notes"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>AI Smart Tutor</span>
-              </button>
+              {syncStatus && (
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium animate-fadeIn">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  {syncStatus}
+                </span>
+              )}
             </div>
           </div>
 

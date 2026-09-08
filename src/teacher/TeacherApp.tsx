@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { ReadingSettings, UserBookmark, NoteDocument, CourseAnnouncement } from "../types";
 import { TeacherPortal } from "../components/TeacherPortal";
 import { DocumentModalViewer } from "../components/DocumentModalViewer";
+import { AiAssistantModal } from "../components/AiAssistantModal";
 import { StudentPortal } from "../student/StudentPortal";
 import { DocumentMergeModal } from "./DocumentMergeModal";
 import { DocumentRenameModal } from "./DocumentRenameModal";
@@ -19,9 +20,10 @@ import {
 
 interface Props {
   isStandalone?: boolean;
+  onSwitchPortal?: (mode: "student" | "teacher") => void;
 }
 
-export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
+export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPortal }) => {
   const [activeView, setActiveView] = useState<string>("dashboard");
   const [isPreviewingStudent, setIsPreviewingStudent] = useState<boolean>(false);
   const isInitializedRef = useRef<boolean>(false);
@@ -119,6 +121,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
   });
 
   const [bookmarks, setBookmarks] = useState<UserBookmark[]>([]);
+  const [isAiChatOpen, setIsAiChatOpen] = useState<boolean>(false);
 
   // File Upload Handler
   const handleUploadDocument = async (
@@ -232,6 +235,11 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
       uploadedAt: "Just now"
     };
     setDocuments(prev => [duplicated, ...prev]);
+    fetch("/api/documents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(duplicated)
+    }).catch(err => console.warn("[TeacherApp] Failed to save duplicate to server:", err));
   };
 
   // Merge Documents
@@ -266,6 +274,11 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
     };
 
     setDocuments(prev => [mergedDoc, ...prev]);
+    fetch("/api/documents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(mergedDoc)
+    }).catch(err => console.warn("[TeacherApp] Failed to save merged doc to server:", err));
   };
 
   // Delete Document
@@ -275,7 +288,18 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
     } catch {
       // ignore
     }
-    setDocuments(prev => prev.filter(d => d.id !== docId));
+    const updated = documents.filter(d => d.id !== docId);
+    setDocuments(updated);
+    await saveDocumentsToStorage(updated);
+    try {
+      await fetch("/api/documents/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documents: updated, overwrite: true })
+      });
+    } catch {
+      // ignore
+    }
     if (activeView === docId) setActiveView("dashboard");
   };
 
@@ -357,18 +381,37 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
               <span>Back to Studio Dashboard</span>
             </button>
           ) : (
-            <button
-              onClick={() => setIsPreviewingStudent(!isPreviewingStudent)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors border ${
-                isPreviewingStudent
-                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
-                  : "bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border-purple-800/60"
-              }`}
-              title="Preview student view"
-            >
-              <GraduationCap className="w-3.5 h-3.5" />
-              <span>{isPreviewingStudent ? "Exit Student Preview" : "Preview as Student"}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsPreviewingStudent(!isPreviewingStudent)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors border ${
+                  isPreviewingStudent
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
+                    : "bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border-purple-800/60"
+                }`}
+                title="Preview student view"
+              >
+                <GraduationCap className="w-3.5 h-3.5" />
+                <span>{isPreviewingStudent ? "Exit Student Preview" : "Preview as Student"}</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (onSwitchPortal) {
+                    onSwitchPortal("student");
+                  } else {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("portal", "student");
+                    window.location.href = url.toString();
+                  }
+                }}
+                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Switch to Student Portal"
+              >
+                <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Student View</span>
+              </button>
+            </div>
           )}
         </div>
       </nav>
@@ -429,7 +472,10 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true }) => {
             onUpdateSettings={setReadingSettings}
             bookmarks={bookmarks}
             onToggleBookmark={() => {}}
-            onOpenAiChat={() => {}}
+            isAiChatOpen={isAiChatOpen}
+            onOpenAiChat={() => setIsAiChatOpen(true)}
+            onCloseAiChat={() => setIsAiChatOpen(false)}
+            onToggleAiChat={() => setIsAiChatOpen(prev => !prev)}
             onOpenQuiz={() => {}}
             onOpenExport={() => {}}
           />

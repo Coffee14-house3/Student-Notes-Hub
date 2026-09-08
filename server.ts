@@ -3,7 +3,9 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
 import { notesData } from "./src/data/notesData";
+import { CourseAnnouncement } from "./src/types";
 import {
   parseDocxBuffer,
   parsePptxBuffer,
@@ -16,6 +18,9 @@ import {
   indexDocumentToChroma,
   indexAllDocumentsToChroma,
   deleteDocumentFromChroma,
+  indexAnnouncementToChroma,
+  deleteAnnouncementFromChroma,
+  indexAllAnnouncementsToChroma,
   resetChromaDatabase,
   queryChroma
 } from "./serverChroma";
@@ -118,6 +123,77 @@ async function parsePdfBuffer(pdfBuffer: Buffer): Promise<{ text: string; pageCo
   }
 
   return { text: "", pageCount: 1, pages: [] };
+}
+
+let geminiClientInstance: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) return null;
+  if (!geminiClientInstance) {
+    geminiClientInstance = new GoogleGenAI({ apiKey });
+  }
+  return geminiClientInstance;
+}
+
+async function callGeminiChat(
+  systemInstruction: string,
+  userPromptWithContext: string
+): Promise<{ text: string; modelUsed: string } | null> {
+  const ai = getGeminiClient();
+  if (!ai) return null;
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: `${systemInstruction}\n\n${userPromptWithContext}` }
+          ]
+        }
+      ],
+      config: {
+        temperature: 0.3
+      }
+    });
+    if (response?.text) {
+      return { text: response.text, modelUsed: "gemini-3.6-flash" };
+    }
+  } catch (err: any) {
+    console.warn("[Gemini API] Chat error:", err?.message || err);
+  }
+  return null;
+}
+
+async function callGeminiQuiz(
+  systemInstruction: string,
+  userPrompt: string
+): Promise<{ text: string; modelUsed: string } | null> {
+  const ai = getGeminiClient();
+  if (!ai) return null;
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: `${systemInstruction}\n\n${userPrompt}` }
+          ]
+        }
+      ],
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.2
+      }
+    });
+    if (response?.text) {
+      return { text: response.text, modelUsed: "gemini-3.6-flash" };
+    }
+  } catch (err: any) {
+    console.warn("[Gemini API] Quiz error:", err?.message || err);
+  }
+  return null;
 }
 
 async function callOpenRouterChat(
@@ -231,6 +307,17 @@ async function startServer() {
 
   app.use(express.json({ limit: "100mb" }));
   app.use(express.urlencoded({ limit: "100mb", extended: true }));
+
+  // Enable CORS for all incoming requests (crucial for cross-domain student/teacher sync on Render)
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   // Server state for Documents & Announcements with disk persistence
   let serverDocuments: any[] = [];
@@ -700,10 +787,13 @@ Output ONLY valid JSON in this format:
       serverDocuments.unshift(finalDoc);
       saveDocuments();
 
-      // Asynchronously index newly parsed document into ChromaDB Cloud
-      indexDocumentToChroma(finalDoc).catch((err) => {
+      // Automatically index newly parsed document into ChromaDB Cloud
+      try {
+        const indexedChunks = await indexDocumentToChroma(finalDoc);
+        console.log(`[ChromaDB] Document "${finalDoc.title}" auto-indexed (${indexedChunks} chunks)`);
+      } catch (err: any) {
         console.warn("[ChromaDB] Document auto-indexing notice:", err?.message);
-      });
+      }
 
       return res.json({ document: finalDoc, provider: "Document Page Engine", format: fileFormat });
 
@@ -714,15 +804,21 @@ Output ONLY valid JSON in this format:
   });
 
   // Remote Teacher API URL (when Student service is deployed separately on Render)
-  const teacherApiUrl = (process.env.TEACHER_API_URL || process.env.TEACHER_SERVICE_URL || "").trim().replace(/\/$/, "");
+  const teacherApiUrl = (
+    process.env.TEACHER_API_URL || 
+    process.env.TEACHER_SERVICE_URL || 
+    ((process.env.PORTAL_MODE || "").toLowerCase().trim() === "student" ? "https://course-teacher-portal.onrender.com" : "")
+  ).trim().replace(/\/$/, "");
 
   async function fetchFromTeacher(apiPath: string, options?: any) {
-    if (!teacherApiUrl) return null;
+    const targetUrl = options?.teacherUrl || teacherApiUrl;
+    if (!targetUrl) return null;
     try {
-      const res = await fetch(`${teacherApiUrl}${apiPath}`, {
+      const res = await fetch(`${targetUrl}${apiPath}`, {
         ...options,
         headers: {
           "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
           ...(options?.headers || {})
         }
       });
@@ -730,7 +826,7 @@ Output ONLY valid JSON in this format:
         return await res.json();
       }
     } catch (err: any) {
-      console.warn(`[Student Gateway] Error proxying to Teacher at ${teacherApiUrl}${apiPath}:`, err?.message);
+      console.warn(`[Student Gateway] Error proxying to Teacher at ${targetUrl}${apiPath}:`, err?.message);
     }
     return null;
   }
@@ -748,9 +844,10 @@ Output ONLY valid JSON in this format:
   // ChromaDB Sync / Re-index API
   app.post("/api/chroma/sync", async (req, res) => {
     try {
-      const indexedCount = await indexAllDocumentsToChroma(serverDocuments);
+      const docCount = await indexAllDocumentsToChroma(serverDocuments);
+      const annCount = await indexAllAnnouncementsToChroma(serverAnnouncements);
       const status = await getChromaStatus();
-      res.json({ success: true, indexedCount, status });
+      res.json({ success: true, indexedCount: docCount + annCount, docCount, annCount, status });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to sync ChromaDB" });
     }
@@ -793,38 +890,49 @@ Output ONLY valid JSON in this format:
 
   // GET /api/documents (filter by role or environment mode, with remote Teacher sync)
   app.get("/api/documents", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+
     const serverMode = (process.env.PORTAL_MODE || "").toLowerCase().trim();
     const role = (req.query.role as string) || (serverMode === "student" ? "student" : "all");
+    const requestedTeacherUrl = (req.query.teacherUrl as string) || undefined;
 
     // If running in student mode and configured with a remote teacher service
-    if ((role === "student" || serverMode === "student") && teacherApiUrl) {
-      const remote = await fetchFromTeacher("/api/documents?role=student");
-      if (remote && Array.isArray(remote.documents)) {
-        return res.json({ documents: remote.documents, source: "remote_teacher" });
-      }
-    }
-
     if (role === "student" || serverMode === "student") {
+      const activeTeacherUrl = requestedTeacherUrl || teacherApiUrl;
+      if (activeTeacherUrl) {
+        const remote = await fetchFromTeacher("/api/documents?role=student", { teacherUrl: activeTeacherUrl });
+        if (remote && Array.isArray(remote.documents)) {
+          return res.json({ documents: remote.documents, source: "remote_teacher" });
+        }
+      }
       const published = serverDocuments.filter(d => d.isPublished !== false);
       return res.json({ documents: published });
     }
+
     return res.json({ documents: serverDocuments });
   });
 
   // POST /api/documents (Create/Add document)
-  app.post("/api/documents", (req, res) => {
+  app.post("/api/documents", async (req, res) => {
     const newDoc = req.body;
     if (!newDoc || !newDoc.id || !newDoc.title) {
       return res.status(400).json({ error: "Document ID and Title are required." });
     }
     serverDocuments.unshift(newDoc);
     saveDocuments();
-    indexDocumentToChroma(newDoc).catch(e => console.warn("[ChromaDB] Index error:", e));
-    return res.json({ document: newDoc, success: true });
+    try {
+      const chunks = await indexDocumentToChroma(newDoc);
+      console.log(`[ChromaDB] Document "${newDoc.title}" added and indexed (${chunks} vector chunks).`);
+    } catch (e: any) {
+      console.warn("[ChromaDB] Index error on POST /api/documents:", e?.message || e);
+    }
+    return res.json({ document: newDoc, success: true, indexedInChroma: true });
   });
 
   // PUT /api/documents/:id (Update document metadata or publish state)
-  app.put("/api/documents/:id", (req, res) => {
+  app.put("/api/documents/:id", async (req, res) => {
     const docId = req.params.id;
     const updates = req.body;
     const idx = serverDocuments.findIndex(d => d.id === docId);
@@ -833,60 +941,96 @@ Output ONLY valid JSON in this format:
     }
     serverDocuments[idx] = { ...serverDocuments[idx], ...updates };
     saveDocuments();
-    indexDocumentToChroma(serverDocuments[idx]).catch(e => console.warn("[ChromaDB] Re-index error:", e));
+    try {
+      await indexDocumentToChroma(serverDocuments[idx]);
+      console.log(`[ChromaDB] Document "${serverDocuments[idx].title}" updated in ChromaDB.`);
+    } catch (e: any) {
+      console.warn("[ChromaDB] Re-index error on PUT /api/documents/:id:", e?.message || e);
+    }
     return res.json({ document: serverDocuments[idx], success: true });
   });
 
   // DELETE /api/documents/:id (Delete document)
-  app.delete("/api/documents/:id", (req, res) => {
+  app.delete("/api/documents/:id", async (req, res) => {
     const docId = req.params.id;
     serverDocuments = serverDocuments.filter(d => d.id !== docId);
     saveDocuments();
-    deleteDocumentFromChroma(docId).catch(e => console.warn("[ChromaDB] Delete error:", e));
-    return res.json({ success: true });
+    try {
+      const pdfPath = path.join(PDF_DIR, `${docId}.pdf`);
+      if (fs.existsSync(pdfPath)) {
+        fs.unlinkSync(pdfPath);
+      }
+    } catch {}
+    try {
+      await deleteDocumentFromChroma(docId);
+      console.log(`[ChromaDB] Document "${docId}" deleted and removed from ChromaDB.`);
+    } catch (e: any) {
+      console.warn("[ChromaDB] Delete error on DELETE /api/documents/:id:", e?.message || e);
+    }
+    return res.json({ success: true, message: `Document ${docId} removed from storage and ChromaDB.` });
   });
 
   // POST /api/documents/reset or /api/documents/clear-all (Clear all documents and vectors)
   app.post("/api/documents/reset", async (req, res) => {
     serverDocuments = [];
     saveDocuments();
-    await resetChromaDatabase([]);
+    await resetChromaDatabase([], serverAnnouncements);
     return res.json({ documents: [], success: true });
   });
 
   app.post("/api/documents/clear-all", async (req, res) => {
     serverDocuments = [];
     saveDocuments();
-    await resetChromaDatabase([]);
+    await resetChromaDatabase([], serverAnnouncements);
     return res.json({ documents: [], success: true });
   });
 
-  // POST /api/documents/sync (Re-hydrate server from client storage if server was cold-booted or restarted)
-  app.post("/api/documents/sync", (req, res) => {
+  // POST /api/documents/sync (Re-hydrate or overwrite server state from client storage)
+  app.post("/api/documents/sync", async (req, res) => {
     try {
       const incoming = req.body?.documents;
-      if (Array.isArray(incoming) && incoming.length > 0) {
-        const existingIds = new Set(serverDocuments.map(d => d.id));
-        let addedCount = 0;
-        for (const doc of incoming) {
-          if (doc && doc.id && !existingIds.has(doc.id)) {
-            serverDocuments.push(doc);
-            existingIds.add(doc.id);
-            addedCount++;
-            // If doc has pdfDataUrl, save to PDF_DIR
-            if (doc.pdfDataUrl && typeof doc.pdfDataUrl === "string" && doc.pdfDataUrl.startsWith("data:")) {
-              try {
-                ensureDataDir();
-                const b64 = doc.pdfDataUrl.split(",")[1];
-                fs.writeFileSync(path.join(PDF_DIR, `${doc.id}.pdf`), Buffer.from(b64, "base64"));
-              } catch {}
-            }
-            indexDocumentToChroma(doc).catch(() => {});
+      const overwrite = Boolean(req.body?.overwrite);
+
+      if (Array.isArray(incoming)) {
+        if (overwrite) {
+          // Authoritative replacement: identify removed documents to purge from ChromaDB
+          const incomingIds = new Set(incoming.map((d: any) => d.id));
+          const removedDocs = serverDocuments.filter(d => !incomingIds.has(d.id));
+
+          for (const removed of removedDocs) {
+            deleteDocumentFromChroma(removed.id).catch(err => {
+              console.warn(`[ChromaDB] Sync cleanup notice for ${removed.id}:`, err?.message || err);
+            });
           }
-        }
-        if (addedCount > 0) {
+
+          serverDocuments = [...incoming];
           saveDocuments();
-          console.log(`[Storage] Synced ${addedCount} documents from client to server storage.`);
+          return res.json({ success: true, count: serverDocuments.length, documents: serverDocuments });
+        }
+
+        if (incoming.length > 0) {
+          const existingIds = new Set(serverDocuments.map(d => d.id));
+          let addedCount = 0;
+          for (const doc of incoming) {
+            if (doc && doc.id && !existingIds.has(doc.id)) {
+              serverDocuments.push(doc);
+              existingIds.add(doc.id);
+              addedCount++;
+              // If doc has pdfDataUrl, save to PDF_DIR
+              if (doc.pdfDataUrl && typeof doc.pdfDataUrl === "string" && doc.pdfDataUrl.startsWith("data:")) {
+                try {
+                  ensureDataDir();
+                  const b64 = doc.pdfDataUrl.split(",")[1];
+                  fs.writeFileSync(path.join(PDF_DIR, `${doc.id}.pdf`), Buffer.from(b64, "base64"));
+                } catch {}
+              }
+              indexDocumentToChroma(doc).catch(() => {});
+            }
+          }
+          if (addedCount > 0) {
+            saveDocuments();
+            console.log(`[Storage] Synced ${addedCount} documents from client to server storage.`);
+          }
         }
       }
       return res.json({ success: true, count: serverDocuments.length, documents: serverDocuments });
@@ -897,6 +1041,10 @@ Output ONLY valid JSON in this format:
 
   // GET /api/announcements (with remote Teacher sync)
   app.get("/api/announcements", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+
     if (teacherApiUrl) {
       const remote = await fetchFromTeacher("/api/announcements");
       if (remote && Array.isArray(remote.announcements)) {
@@ -907,16 +1055,16 @@ Output ONLY valid JSON in this format:
   });
 
   // POST /api/announcements
-  app.post("/api/announcements", (req, res) => {
+  app.post("/api/announcements", async (req, res) => {
     const { title, content, author, important, relatedDocId, relatedDocTitle } = req.body;
     if (!title || !content) {
       return res.status(400).json({ error: "Title and Content are required." });
     }
-    const newAnn = {
-      id: `ann-${Date.now()}`,
+    const newAnn: CourseAnnouncement = {
+      id: req.body.id || `ann-${Date.now()}`,
       title,
       content,
-      date: "Just now",
+      date: req.body.date || new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       author: author || "Teacher",
       important: !!important,
       relatedDocId,
@@ -924,14 +1072,33 @@ Output ONLY valid JSON in this format:
     };
     serverAnnouncements.unshift(newAnn);
     saveAnnouncements();
-    res.json({ announcement: newAnn, success: true });
+
+    // Automatically index new announcement into ChromaDB Cloud
+    try {
+      await indexAnnouncementToChroma(newAnn);
+      console.log(`[ChromaDB] Announcement "${newAnn.title}" added and indexed in ChromaDB.`);
+    } catch (e: any) {
+      console.warn("[ChromaDB] Announcement indexing notice:", e?.message || e);
+    }
+
+    res.json({ announcement: newAnn, success: true, indexedInChroma: true });
   });
 
   // DELETE /api/announcements/:id
-  app.delete("/api/announcements/:id", (req, res) => {
-    serverAnnouncements = serverAnnouncements.filter(a => a.id !== req.params.id);
+  app.delete("/api/announcements/:id", async (req, res) => {
+    const annId = req.params.id;
+    serverAnnouncements = serverAnnouncements.filter(a => a.id !== annId);
     saveAnnouncements();
-    res.json({ success: true });
+
+    // Automatically remove announcement from ChromaDB Cloud
+    try {
+      await deleteAnnouncementFromChroma(annId);
+      console.log(`[ChromaDB] Announcement "${annId}" deleted from ChromaDB.`);
+    } catch (e: any) {
+      console.warn("[ChromaDB] Announcement deletion notice:", e?.message || e);
+    }
+
+    res.json({ success: true, message: `Announcement ${annId} removed from storage and ChromaDB.` });
   });
 
   // AI Notes Assistant API route using OpenRouter or Groq with Full PDF RAG
@@ -1041,7 +1208,16 @@ ${ragContextText}
 
 User Question: ${prompt}`;
 
-      // 1. Try OpenRouter AI FIRST if API key is provided
+      // 1. Try Gemini 3.6 Flash FIRST using @google/genai SDK
+      const geminiResult = await callGeminiChat(
+        systemInstruction,
+        `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}`
+      );
+      if (geminiResult?.text) {
+        return res.json({ text: geminiResult.text, provider: `Google Gemini (${geminiResult.modelUsed})` });
+      }
+
+      // 2. Try OpenRouter AI if API key is provided
       const openRouterResult = await callOpenRouterChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }
@@ -1050,7 +1226,7 @@ User Question: ${prompt}`;
         return res.json({ text: openRouterResult.text, provider: `OpenRouter (${openRouterResult.modelUsed})` });
       }
 
-      // 2. Try Groq API key if available
+      // 3. Try Groq API key if available
       const groqResult = await callGroqChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }
@@ -1156,7 +1332,33 @@ Example JSON structure:
         { role: "user", content: userPrompt }
       ];
 
-      // 1. Try OpenRouter AI first
+      // 1. Try Google Gemini first
+      const geminiQuizRes = await callGeminiQuiz(systemPrompt, userPrompt);
+      if (geminiQuizRes?.text) {
+        try {
+          const cleaned = geminiQuizRes.text.trim().replace(/^```json/i, "").replace(/^```/i, "").replace(/```$/, "").trim();
+          let parsed = JSON.parse(cleaned);
+          let qList = Array.isArray(parsed) ? parsed : (parsed.questions || Object.values(parsed).find(v => Array.isArray(v)));
+
+          if (Array.isArray(qList) && qList.length > 0) {
+            const formatted = qList.map((q: any, i: number) => ({
+              id: `gemini-${docId || "note"}-${Date.now()}-${i}`,
+              noteId: docId || "note",
+              question: q.question || "Practice Question",
+              options: Array.isArray(q.options) && q.options.length === 4 ? q.options : ["Option A", "Option B", "Option C", "Option D"],
+              correctIndex: typeof q.correctIndex === "number" && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
+              explanation: q.explanation || "Extracted directly from note content.",
+              topic: q.topic || documentTitle || "Key Concept"
+            }));
+
+            return res.json({ questions: formatted, provider: `Google Gemini (${geminiQuizRes.modelUsed})` });
+          }
+        } catch (parseErr) {
+          console.warn("[Gemini API] Failed to parse quiz JSON:", parseErr);
+        }
+      }
+
+      // 2. Try OpenRouter AI
       const openRouterQuizRes = await callOpenRouterChat(quizMessages, undefined, true);
       if (openRouterQuizRes?.text) {
         try {
@@ -1682,6 +1884,12 @@ ${extractedContent}
       if (ready) {
         const status = await getChromaStatus();
         console.log(`[ChromaDB] Ready with ${status.vectorCount} indexed vector chunks in database "${status.database}"`);
+        // If empty, auto-seed initial documents and announcements into ChromaDB
+        if (status.vectorCount === 0 && (serverDocuments.length > 0 || serverAnnouncements.length > 0)) {
+          console.log(`[ChromaDB] Auto-indexing initial course notes and announcements...`);
+          await indexAllDocumentsToChroma(serverDocuments);
+          await indexAllAnnouncementsToChroma(serverAnnouncements);
+        }
       }
     }).catch((err) => {
       console.warn("[ChromaDB] Background startup notice:", err?.message);

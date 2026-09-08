@@ -196,43 +196,37 @@ export async function loadAnnouncementsFromStorage(): Promise<CourseAnnouncement
 
 /**
  * Bi-directional Smart Sync:
- * - Compares server documents and local documents
- * - If server has docs, updates local cache
- * - If server was restarted or cleared (e.g. Render ephemeral restart) and local has uploaded files,
- *   re-hydrates the server via /api/documents/sync so files are restored both in the server and in ChromaDB!
+ * - When role is 'student': Server documents are strictly authoritative. Any documents deleted
+ *   or unpublished by the teacher are immediately purged from the student's local cache.
+ * - When role is 'teacher': If the server has documents, it is authoritative.
+ *   Only if the server is completely empty (e.g. cold restart on ephemeral disk) does local re-hydration occur.
  */
 export async function syncDocumentsWithServer(
   serverDocs: NoteDocument[],
   role: "teacher" | "student" = "teacher"
 ): Promise<NoteDocument[]> {
-  const localDocs = await loadDocumentsFromStorage();
-
-  // If server has documents, merge server documents with local
-  if (Array.isArray(serverDocs) && serverDocs.length > 0) {
-    // Merge: server docs take priority for metadata, but keep any local docs not on server
-    const serverMap = new Map<string, NoteDocument>(serverDocs.map(d => [d.id, d]));
-    const merged: NoteDocument[] = [...serverDocs];
-
-    // Check if there are local user-uploaded docs missing on server
-    const missingOnServer = localDocs.filter(d => !serverMap.has(d.id));
-    if (missingOnServer.length > 0) {
-      merged.push(...missingOnServer);
-      // Resync missing files back to server in background
-      fetch("/api/documents/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: missingOnServer })
-      }).catch(err => console.warn("[Sync] Background sync to server failed:", err));
+  // 1. For Students: The teacher's server is the absolute ground truth.
+  if (role === "student") {
+    if (Array.isArray(serverDocs)) {
+      // Overwrite student local storage with the exact published list from the server
+      const publishedOnly = serverDocs.filter(d => d.isPublished !== false);
+      await saveDocumentsToStorage(publishedOnly);
+      return publishedOnly;
     }
-
-    await saveDocumentsToStorage(merged);
-    return merged;
+    return [];
   }
 
-  // If server returned empty, but client has persisted files from previous uploads!
+  // 2. For Teacher: If server already has documents, synchronize local cache to match server
+  const localDocs = await loadDocumentsFromStorage();
+  if (Array.isArray(serverDocs) && serverDocs.length > 0) {
+    await saveDocumentsToStorage(serverDocs);
+    return serverDocs;
+  }
+
+  // 3. If server returned empty, but teacher has persisted files from previous session,
+  // re-hydrate server so files are restored after container restart
   if (localDocs.length > 0) {
-    console.log(`[Storage] Server storage was empty; re-hydrating server with ${localDocs.length} local documents...`);
-    // Restore server from client
+    console.log(`[Storage] Server storage was empty; re-hydrating teacher server with ${localDocs.length} local documents...`);
     try {
       const res = await fetch("/api/documents/sync", {
         method: "POST",
@@ -253,3 +247,29 @@ export async function syncDocumentsWithServer(
 
   return [];
 }
+
+/**
+ * Purge deleted documents from local cache given an authoritative list of IDs
+ */
+export async function purgeDeletedDocuments(authoritativeDocIds: string[]): Promise<void> {
+  const allowed = new Set(authoritativeDocIds);
+  const localDocs = await loadDocumentsFromStorage();
+  const filtered = localDocs.filter(d => allowed.has(d.id));
+  await saveDocumentsToStorage(filtered);
+}
+
+/**
+ * Clear all document caches from IndexedDB and localStorage
+ */
+export async function clearAllDocumentStorage(): Promise<void> {
+  try {
+    localStorage.removeItem(LOCAL_DOCS_KEY);
+  } catch {}
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DOCS_STORE, "readwrite");
+    const store = tx.objectStore(DOCS_STORE);
+    store.clear();
+  } catch {}
+}
+

@@ -15,7 +15,7 @@ interface Props {
   onSelectDocument: (docId: string, openAiChat?: boolean) => void;
   onOpenQuiz: (docId?: string) => void;
   onOpenSearch: () => void;
-  onOpenAiTutor: () => void;
+  onOpenAiTutor?: () => void;
   isStandalone?: boolean;
 }
 
@@ -206,14 +206,6 @@ export const StudentPortal: React.FC<Props> = ({
                     <span>Share Student Link</span>
                   </>
                 )}
-              </button>
-
-              <button
-                onClick={onOpenAiTutor}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-2 transition-all shadow-md hover:shadow-amber-500/20 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>AI Smart Tutor</span>
               </button>
             </div>
           </div>
