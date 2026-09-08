@@ -581,38 +581,6 @@ export const TeacherPortal: React.FC<Props> = ({
                 Upload PDF lecture notes, Word documents (.docx, .doc), PowerPoint presentations (.pptx, .ppt), code, or markdown with automatic slide/page extraction.
               </p>
             </div>
-
-            {/* Quick Sample Note Loaders */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] text-slate-400 mr-1">Quick Sample:</span>
-              <button
-                onClick={() => onLoadSampleDocument("pdf")}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-red-300 hover:text-red-200 text-xs font-semibold border border-red-900/40 transition-colors cursor-pointer"
-                title="Test with PDF Whitepaper"
-              >
-                + PDF Notes
-              </button>
-              <button
-                onClick={() => onLoadSampleDocument("docx")}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-300 hover:text-blue-200 text-xs font-semibold border border-blue-900/40 transition-colors cursor-pointer"
-                title="Test with Word Document (.docx)"
-              >
-                + Word (.docx)
-              </button>
-              <button
-                onClick={() => onLoadSampleDocument("pptx")}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-xs font-semibold border border-amber-900/40 transition-colors cursor-pointer"
-                title="Test with PowerPoint Slide Deck (.pptx)"
-              >
-                + Slide Deck (.pptx)
-              </button>
-              <button
-                onClick={() => onLoadSampleDocument("code")}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-emerald-200 text-xs font-semibold border border-emerald-900/40 transition-colors cursor-pointer"
-              >
-                + Code (.py)
-              </button>
-            </div>
           </div>
 
           {/* Upload Drop Zone & Form Grid */}

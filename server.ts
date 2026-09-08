@@ -1856,6 +1856,24 @@ ${extractedContent}
 - **Cost Efficiency:** Utility pay-as-you-go pricing optimizes IT budgets.`;
 }
 
+  // Technical Documentation PDF endpoints
+  app.get(["/api/documentation/pdf", "/api/documentation/download", "/documentation.pdf"], (req, res) => {
+    const pdfPath = path.join(process.cwd(), "public", "CourseNotesHub-Technical-Documentation.pdf");
+    if (fs.existsSync(pdfPath)) {
+      const isDownload = req.path.includes("download");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        isDownload 
+          ? 'attachment; filename="CourseNotesHub-Technical-Documentation.pdf"'
+          : 'inline; filename="CourseNotesHub-Technical-Documentation.pdf"'
+      );
+      res.sendFile(pdfPath);
+    } else {
+      res.status(404).json({ error: "Documentation PDF not found. Please run build to generate." });
+    }
+  });
+
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });

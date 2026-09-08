@@ -3,11 +3,10 @@ import { ReadingSettings, UserBookmark, NoteDocument, CourseAnnouncement } from 
 import { TeacherPortal } from "../components/TeacherPortal";
 import { DocumentModalViewer } from "../components/DocumentModalViewer";
 import { AiAssistantModal } from "../components/AiAssistantModal";
-import { StudentPortal } from "../student/StudentPortal";
 import { DocumentMergeModal } from "./DocumentMergeModal";
 import { DocumentRenameModal } from "./DocumentRenameModal";
 import { DocumentDetailsModal } from "./DocumentDetailsModal";
-import { Layers, GraduationCap, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { Layers, ArrowLeft, Eye, EyeOff, FileText } from "lucide-react";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -25,7 +24,6 @@ interface Props {
 
 export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPortal }) => {
   const [activeView, setActiveView] = useState<string>("dashboard");
-  const [isPreviewingStudent, setIsPreviewingStudent] = useState<boolean>(false);
   const isInitializedRef = useRef<boolean>(false);
 
   // Documents state initialized with cached local data for instant 0ms reload
@@ -372,7 +370,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {activeView !== "dashboard" ? (
+          {activeView !== "dashboard" && (
             <button
               onClick={() => setActiveView("dashboard")}
               className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
@@ -380,69 +378,24 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to Studio Dashboard</span>
             </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsPreviewingStudent(!isPreviewingStudent)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors border ${
-                  isPreviewingStudent
-                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30"
-                    : "bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border-purple-800/60"
-                }`}
-                title="Preview student view"
-              >
-                <GraduationCap className="w-3.5 h-3.5" />
-                <span>{isPreviewingStudent ? "Exit Student Preview" : "Preview as Student"}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  if (onSwitchPortal) {
-                    onSwitchPortal("student");
-                  } else {
-                    const url = new URL(window.location.href);
-                    url.searchParams.set("portal", "student");
-                    window.location.href = url.toString();
-                  }
-                }}
-                className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                title="Switch to Student Portal"
-              >
-                <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
-                <span>Student View</span>
-              </button>
-            </div>
           )}
+
+          <a
+            href="/api/documentation/pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border border-purple-800/60 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+            title="View Technical Documentation (PDF)"
+          >
+            <FileText className="w-3.5 h-3.5 text-purple-300" />
+            <span className="hidden sm:inline">Documentation (PDF)</span>
+          </a>
         </div>
       </nav>
 
       {/* Main Studio Area */}
       <main className="flex-1">
-        {isPreviewingStudent ? (
-          <div className="space-y-4">
-            <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between text-xs text-amber-300">
-              <span className="font-semibold flex items-center gap-2">
-                <GraduationCap className="w-4 h-4" />
-                Live Student Preview Mode — Only published materials are displayed
-              </span>
-              <button
-                onClick={() => setIsPreviewingStudent(false)}
-                className="px-2.5 py-1 bg-amber-500 text-slate-950 font-bold rounded-lg text-[11px] hover:bg-amber-400"
-              >
-                Return to Teacher Studio
-              </button>
-            </div>
-            <StudentPortal
-              documents={documents}
-              announcements={announcements}
-              onSelectDocument={(docId) => setActiveView(docId)}
-              onOpenQuiz={() => {}}
-              onOpenSearch={() => {}}
-              onOpenAiTutor={() => {}}
-              isStandalone={false}
-            />
-          </div>
-        ) : activeView === "dashboard" || !currentDocument ? (
+        {activeView === "dashboard" || !currentDocument ? (
           <TeacherPortal
             documents={documents}
             announcements={announcements}
@@ -456,7 +409,15 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             onTogglePublishDocument={handleTogglePublishDocument}
             onCreateAnnouncement={handleCreateAnnouncement}
             onDeleteAnnouncement={handleDeleteAnnouncement}
-            onSwitchToStudent={() => setIsPreviewingStudent(true)}
+            onSwitchToStudent={() => {
+              if (onSwitchPortal) {
+                onSwitchPortal("student");
+              } else {
+                const url = new URL(window.location.href);
+                url.searchParams.set("portal", "student");
+                window.location.href = url.toString();
+              }
+            }}
           />
         ) : (
           <DocumentModalViewer

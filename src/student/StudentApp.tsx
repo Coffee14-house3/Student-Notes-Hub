@@ -6,7 +6,7 @@ import { FlashcardsQuiz } from "./FlashcardsQuiz";
 import { SearchModal } from "./SearchModal";
 import { ExportModal } from "./ExportModal";
 import { AiAssistantModal } from "./AiAssistantModal";
-import { GraduationCap, BookOpen, Share2, Check, ArrowLeft } from "lucide-react";
+import { GraduationCap, BookOpen, Share2, Check, ArrowLeft, FileText } from "lucide-react";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -309,6 +309,17 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
               </>
             )}
           </button>
+
+          <a
+            href="/api/documentation/pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 border border-amber-500/30 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+            title="View Technical Documentation (PDF)"
+          >
+            <FileText className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Documentation (PDF)</span>
+          </a>
         </div>
       </nav>
 
