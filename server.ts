@@ -385,6 +385,8 @@ async function startServer() {
         return doc;
       });
       fs.writeFileSync(DOCS_FILE, JSON.stringify(cleanDocs, null, 2), "utf-8");
+      // Automatically trigger background sync to ChromaDB Cloud
+      triggerAutoChromaSync(1200);
     } catch (e) {
       console.warn("[Storage] Error saving documents to disk:", e);
     }
@@ -394,13 +396,53 @@ async function startServer() {
     try {
       ensureDataDir();
       fs.writeFileSync(ANNOUNCEMENTS_FILE, JSON.stringify(serverAnnouncements, null, 2), "utf-8");
+      // Automatically trigger background sync to ChromaDB Cloud
+      triggerAutoChromaSync(1200);
     } catch (e) {
       console.warn("[Storage] Error saving announcements to disk:", e);
     }
   }
 
+  // Automatic ChromaDB Cloud Synchronization Engine
+  let autoChromaSyncTimer: NodeJS.Timeout | null = null;
+  let isAutoChromaSyncRunning = false;
+
+  function triggerAutoChromaSync(delayMs = 1500) {
+    if (autoChromaSyncTimer) clearTimeout(autoChromaSyncTimer);
+    autoChromaSyncTimer = setTimeout(async () => {
+      if (isAutoChromaSyncRunning) {
+        // Reschedule if already performing a synchronization pass
+        setTimeout(() => triggerAutoChromaSync(3000), 3000);
+        return;
+      }
+      isAutoChromaSyncRunning = true;
+      try {
+        console.log(`[ChromaDB Auto-Sync] Auto-synchronizing ${serverDocuments.length} documents and ${serverAnnouncements.length} announcements to ChromaDB Cloud...`);
+        const ready = await initChroma();
+        if (ready) {
+          const docCount = await indexAllDocumentsToChroma(serverDocuments);
+          const annCount = await indexAllAnnouncementsToChroma(serverAnnouncements);
+          const status = await getChromaStatus();
+          console.log(`[ChromaDB Auto-Sync] Complete: ${docCount} document chunks, ${annCount} announcement vectors synced. Collection total: ${status.vectorCount} vectors in database "${status.database}".`);
+        }
+      } catch (syncErr: any) {
+        console.warn(`[ChromaDB Auto-Sync] Synchronization warning:`, syncErr?.message || syncErr);
+      } finally {
+        isAutoChromaSyncRunning = false;
+      }
+    }, delayMs);
+  }
+
   // Load any previously persisted data on server boot
   loadPersistedData();
+  
+  // Initial background auto-sync to ensure ChromaDB is always updated on server launch
+  triggerAutoChromaSync(2000);
+
+  // Periodic automatic reconciliation every 5 minutes
+  setInterval(() => {
+    triggerAutoChromaSync(500);
+  }, 5 * 60 * 1000);
 
   const pdfBuffers = new Map<string, Buffer>();
 
@@ -947,6 +989,22 @@ Output ONLY valid JSON in this format:
     } catch (e: any) {
       console.warn("[ChromaDB] Re-index error on PUT /api/documents/:id:", e?.message || e);
     }
+    return res.json({ document: serverDocuments[idx], success: true });
+  });
+
+  // PUT /api/documents/:id/publish (Toggle publication status)
+  app.put("/api/documents/:id/publish", async (req, res) => {
+    const docId = req.params.id;
+    const { isPublished } = req.body;
+    const idx = serverDocuments.findIndex(d => d.id === docId);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Document not found." });
+    }
+    serverDocuments[idx] = {
+      ...serverDocuments[idx],
+      isPublished: Boolean(isPublished)
+    };
+    saveDocuments();
     return res.json({ document: serverDocuments[idx], success: true });
   });
 

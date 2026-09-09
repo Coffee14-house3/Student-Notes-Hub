@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { 
-  ChevronLeft, ChevronRight, ChevronDown, ZoomIn, ZoomOut, Search, Sparkles, 
+  ChevronLeft, ChevronRight, ChevronDown, Search, Sparkles, 
   Download, HelpCircle, Layers, FileText, Bookmark, Grid, 
-  Maximize2, RotateCcw, PanelLeft, Sun, Moon, X, Copy, Check,
+  RotateCcw, PanelLeft, Sun, Moon, X, Copy, Check,
   Upload, LayoutGrid, FolderCog, Edit3, Trash2, MessageSquare,
   Info, GitMerge, Volume2, List, Printer, Plus, Minus
 } from "lucide-react";
@@ -501,13 +501,6 @@ export const DocumentModalViewer: React.FC<Props> = ({
     };
   }, [isContinuousScroll, activeSections, setActiveSectionId]);
 
-  const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value, 10);
-    if (!isNaN(val)) {
-      handlePageChange(val);
-    }
-  };
-
   const currentSection = activeSections[currentPage - 1] || activeSections[0];
 
   // Key navigation (Left / Right arrow for pages, Esc to close)
@@ -986,123 +979,6 @@ export const DocumentModalViewer: React.FC<Props> = ({
           </aside>
         </>
       </div>
-
-      {/* Floating Bottom Control Toolbar Pill (Hidden on Mobile when AI Chat is Open to avoid blocking input) */}
-      {activeView !== "quiz" && (
-        <div className={`fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] sm:bottom-6 left-1/2 -translate-x-1/2 z-30 bg-[#2c2c2ce6] backdrop-blur-md text-white border border-[#444] rounded-full px-2.5 py-1.5 sm:px-5 sm:py-2.5 items-center gap-1.5 sm:gap-4 shadow-2xl text-xs select-none max-w-[96vw] whitespace-nowrap ${effectiveAiChatOpen ? "hidden sm:flex" : "flex"}`}>
-          {/* Page Jump Controls */}
-          <div className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
-            <button
-              onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage <= 1}
-              className="p-1 rounded hover:bg-white/10 disabled:opacity-30 transition-colors shrink-0"
-              title="Previous Page (Left Arrow)"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <div className="flex items-center gap-1 font-mono text-xs whitespace-nowrap shrink-0">
-              <span className="text-slate-400 text-[11px] sm:text-xs shrink-0">Pg</span>
-              <input
-                type="number"
-                min={1}
-                max={totalPages}
-                value={currentPage}
-                onChange={handlePageInput}
-                className="w-9 sm:w-10 bg-[#1e1e1e] border border-[#555] rounded text-center text-amber-400 font-bold py-0.5 px-0.5 text-xs focus:outline-none focus:border-amber-500 shrink-0"
-              />
-              <span className="text-slate-400 text-[11px] sm:text-xs whitespace-nowrap shrink-0">/ {totalPages}</span>
-            </div>
-
-            <button
-              onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage >= totalPages}
-              className="p-1 rounded hover:bg-white/10 disabled:opacity-30 transition-colors shrink-0"
-              title="Next Page (Right Arrow)"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="h-4 w-px bg-[#555]" />
-
-          {/* Zoom Controls */}
-          <div className="flex items-center gap-1 sm:gap-2">
-            <button
-              onClick={() => setZoomLevel(prev => Math.max(70, prev - 10))}
-              className="p-1 rounded hover:bg-white/10 transition-colors text-slate-300"
-              title="Zoom Out"
-            >
-              <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            </button>
-
-            <button
-              onClick={() => setZoomLevel(100)}
-              className="text-[11px] sm:text-xs font-mono font-medium text-slate-300 hover:text-white px-1 py-0.5 rounded hover:bg-white/10"
-              title="Reset Zoom to 100%"
-            >
-              {zoomLevel}%
-            </button>
-
-            <button
-              onClick={() => setZoomLevel(prev => Math.min(140, prev + 10))}
-              className="p-1 rounded hover:bg-white/10 transition-colors text-slate-300"
-              title="Zoom In"
-            >
-              <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            </button>
-          </div>
-
-          <div className="hidden sm:block h-4 w-px bg-[#555]" />
-
-          {/* View Mode Toggle: All Pages / Single Page */}
-          <button
-            onClick={() => {
-              const nextMode = !isContinuousScroll;
-              setIsContinuousScroll(nextMode);
-              setTimeout(() => {
-                const container = pageContainerRef.current;
-                if (!container) return;
-                if (!nextMode) {
-                  container.scrollTo({ top: 0, behavior: "smooth" });
-                } else {
-                  const pageEl = window.document.getElementById(`doc-page-${currentPage}`);
-                  if (pageEl) {
-                    const scale = (zoomLevel || 100) / 100;
-                    const cRect = container.getBoundingClientRect();
-                    const pRect = pageEl.getBoundingClientRect();
-                    const relTop = (pRect.top - cRect.top) / scale;
-                    container.scrollTo({ top: Math.max(0, container.scrollTop + relTop - 20), behavior: "smooth" });
-                  }
-                }
-              }, 50);
-            }}
-            className={`px-2.5 py-1 rounded flex items-center gap-1.5 transition-all cursor-pointer ${
-              isContinuousScroll
-                ? "bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30"
-                : "bg-slate-700/60 text-slate-200 border border-slate-600 hover:bg-slate-700"
-            }`}
-            title={isContinuousScroll ? "Currently showing all pages. Click for single-page presentation" : "Currently in single slide view. Click to view all pages stacked"}
-          >
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-[11px] font-semibold">
-              {isContinuousScroll ? "All Pages" : "Single Slide"}
-            </span>
-          </button>
-
-          <div className="hidden sm:block h-4 w-px bg-[#555]" />
-
-          {/* Reset Fit */}
-          <button
-            onClick={() => setZoomLevel(100)}
-            className="hidden sm:flex p-1 rounded hover:bg-white/10 transition-colors text-slate-300 items-center gap-1"
-            title="Fit to Width"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span className="text-[11px]">Fit</span>
-          </button>
-        </div>
-      )}
 
       {/* Note-Specific Practice Quiz Modal Overlay */}
       {(showQuizModal || activeView === "quiz") && (

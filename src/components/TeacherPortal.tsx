@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import { 
   Upload, FileText, Sparkles, BookOpen, Trash2, ArrowRight, 
   CheckCircle2, FileCode, Search, HelpCircle, Layers, ShieldCheck, 
-  RefreshCw, Plus, HardDrive, File, Database, Zap, Edit3, 
+  RefreshCw, Plus, HardDrive, File, Zap, Edit3, 
   Copy, Eye, EyeOff, GitMerge, Share2, Check, AlertCircle, 
   Bell, User, GraduationCap, ArrowUpRight, Lock, Unlock,
   SlidersHorizontal, Download, FolderPlus, Folder, ChevronDown,
@@ -94,41 +94,6 @@ export const TeacherPortal: React.FC<Props> = ({
 
   // Collapsed Subjects in Curriculum View
   const [collapsedSubjects, setCollapsedSubjects] = useState<Record<string, boolean>>({});
-
-  // ChromaDB Cloud Vector Database State
-  const [chromaStatus, setChromaStatus] = useState<{
-    connected: boolean;
-    tenant: string;
-    database: string;
-    collection: string;
-    vectorCount: number;
-    error: string | null;
-  } | null>(null);
-  const [isSyncingChroma, setIsSyncingChroma] = useState<boolean>(false);
-  const [chromaSyncMsg, setChromaSyncMsg] = useState<string | null>(null);
-
-  React.useEffect(() => {
-    fetch("/api/chroma/status")
-      .then(res => res.json())
-      .then(data => setChromaStatus(data))
-      .catch(() => {});
-  }, [documents.length, announcements.length]);
-
-  const handleSyncChroma = async () => {
-    setIsSyncingChroma(true);
-    setChromaSyncMsg(null);
-    try {
-      const res = await fetch("/api/chroma/sync", { method: "POST" });
-      const data = await res.json();
-      if (data.status) setChromaStatus(data.status);
-      setChromaSyncMsg(`ChromaDB synchronized: ${data.indexedCount || 0} vector chunks ready`);
-      setTimeout(() => setChromaSyncMsg(null), 4000);
-    } catch {
-      setChromaSyncMsg("Sync failed. Please check network connection.");
-    } finally {
-      setIsSyncingChroma(false);
-    }
-  };
 
   // Announcement Form State
   const [showAnnounceForm, setShowAnnounceForm] = useState<boolean>(false);
@@ -530,42 +495,6 @@ export const TeacherPortal: React.FC<Props> = ({
                 <div className="text-base font-bold text-white">{totalPages} Pages</div>
                 <div className="text-slate-400 text-[11px]">Total Study Content</div>
               </div>
-            </div>
-          </div>
-
-          {/* ChromaDB Cloud Vector Database Status Bar */}
-          <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 rounded-lg bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                <Database className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-slate-200">ChromaDB Cloud:</span>
-                <span className="font-mono text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded-md border border-purple-800/40 text-[11px]">
-                  {chromaStatus?.database || "rag-notes-application1"}
-                </span>
-                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  {chromaStatus?.connected ? `Connected (${chromaStatus.vectorCount} Vector Chunks)` : "Connected (Chroma Cloud)"}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {chromaSyncMsg && (
-                <span className="text-[11px] text-emerald-400 font-medium bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-800/40 animate-fadeIn">
-                  {chromaSyncMsg}
-                </span>
-              )}
-              <button
-                onClick={handleSyncChroma}
-                disabled={isSyncingChroma}
-                className="px-3 py-1.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border border-purple-800/60 font-semibold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                title="Synchronize all notes into ChromaDB Cloud vector database"
-              >
-                <RefreshCw className={`w-3 h-3 text-purple-400 ${isSyncingChroma ? "animate-spin" : ""}`} />
-                <span>{isSyncingChroma ? "Syncing..." : "Sync ChromaDB Vectors"}</span>
-              </button>
             </div>
           </div>
         </div>

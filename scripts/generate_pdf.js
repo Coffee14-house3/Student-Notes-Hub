@@ -13,6 +13,7 @@ async function generateDocumentationPdf() {
   // Palette
   const colorPrimary = rgb(0.06, 0.09, 0.16); // Slate 900
   const colorSecondary = rgb(0.85, 0.55, 0.05); // Amber 600
+  const colorAccent = rgb(0.55, 0.20, 0.90); // Purple 600
   const colorText = rgb(0.15, 0.20, 0.28); // Slate 800
   const colorMuted = rgb(0.40, 0.45, 0.55); // Slate 500
   const colorCardBg = rgb(0.96, 0.97, 0.98); // Light Slate
@@ -22,8 +23,8 @@ async function generateDocumentationPdf() {
 
   const PAGE_WIDTH = 612;
   const PAGE_HEIGHT = 792;
-  const MARGIN_LEFT = 48;
-  const MARGIN_RIGHT = 48;
+  const MARGIN_LEFT = 46;
+  const MARGIN_RIGHT = 46;
   const CONTENT_WIDTH = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT;
 
   let currentPage = null;
@@ -63,24 +64,24 @@ async function generateDocumentationPdf() {
         color: rgb(0.95, 0.70, 0.20),
       });
 
-      cursorY = PAGE_HEIGHT - 54;
+      cursorY = PAGE_HEIGHT - 52;
     }
     return currentPage;
   }
 
   function checkPageSpace(requiredHeight) {
-    if (cursorY - requiredHeight < 55) {
+    if (cursorY - requiredHeight < 50) {
       addNewPage(false);
     }
   }
 
   function drawHeading(text, level = 1) {
-    const size = level === 1 ? 16 : level === 2 ? 12 : 10;
+    const size = level === 1 ? 14 : level === 2 ? 11 : 9.5;
     const font = fontBold;
-    const spacingBefore = level === 1 ? 20 : level === 2 ? 14 : 8;
-    const spacingAfter = level === 1 ? 10 : level === 2 ? 6 : 4;
+    const spacingBefore = level === 1 ? 14 : level === 2 ? 10 : 6;
+    const spacingAfter = level === 1 ? 8 : level === 2 ? 5 : 3;
 
-    checkPageSpace(size + spacingBefore + spacingAfter + 30);
+    checkPageSpace(size + spacingBefore + spacingAfter + 20);
     cursorY -= spacingBefore;
 
     if (level === 1) {
@@ -88,12 +89,12 @@ async function generateDocumentationPdf() {
       currentPage.drawRectangle({
         x: MARGIN_LEFT,
         y: cursorY - 2,
-        width: 4,
+        width: 3.5,
         height: size + 2,
         color: colorSecondary,
       });
       currentPage.drawText(text, {
-        x: MARGIN_LEFT + 10,
+        x: MARGIN_LEFT + 8,
         y: cursorY,
         size,
         font,
@@ -103,12 +104,12 @@ async function generateDocumentationPdf() {
 
       // Thin divider
       currentPage.drawLine({
-        start: { x: MARGIN_LEFT, y: cursorY + 4 },
-        end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursorY + 4 },
+        start: { x: MARGIN_LEFT, y: cursorY + 3 },
+        end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursorY + 3 },
         thickness: 0.75,
         color: colorBorder,
       });
-      cursorY -= 6;
+      cursorY -= 4;
     } else if (level === 2) {
       currentPage.drawText(text, {
         x: MARGIN_LEFT,
@@ -161,16 +162,16 @@ async function generateDocumentationPdf() {
   }
 
   function drawParagraph(text, options = {}) {
-    const fontSize = options.fontSize || 9;
+    const fontSize = options.fontSize || 8.5;
     const font = options.font || fontRegular;
     const color = options.color || colorText;
-    const lineSpacing = options.lineSpacing || 13;
+    const lineSpacing = options.lineSpacing || 12;
     const maxWidth = options.maxWidth || CONTENT_WIDTH;
     const indent = options.indent || 0;
 
     const lines = wrapText(text, maxWidth - indent, font, fontSize);
 
-    checkPageSpace(lines.length * lineSpacing + 6);
+    checkPageSpace(lines.length * lineSpacing + 4);
 
     for (const line of lines) {
       currentPage.drawText(line, {
@@ -182,34 +183,33 @@ async function generateDocumentationPdf() {
       });
       cursorY -= lineSpacing;
     }
-    cursorY -= (options.marginBottom || 4);
+    cursorY -= (options.marginBottom || 3);
   }
 
   function drawBullet(title, description) {
-    const fontSize = 8.5;
+    const fontSize = 8;
     const titleWidth = fontBold.widthOfTextAtSize(title ? `${title}: ` : "", fontSize);
-    const lineSpacing = 12.5;
+    const lineSpacing = 11.5;
 
     const fullText = title ? `${title}: ${description}` : description;
-    const lines = wrapText(fullText, CONTENT_WIDTH - 16, fontRegular, fontSize);
+    const lines = wrapText(fullText, CONTENT_WIDTH - 14, fontRegular, fontSize);
 
     checkPageSpace(lines.length * lineSpacing + 4);
 
     // Bullet dot
     currentPage.drawCircle({
-      x: MARGIN_LEFT + 4,
+      x: MARGIN_LEFT + 3,
       y: cursorY + 3,
-      size: 2,
+      size: 1.8,
       color: colorSecondary,
     });
 
     for (let idx = 0; idx < lines.length; idx++) {
       const line = lines[idx];
       if (idx === 0 && title) {
-        // Draw bold title then regular body
         const boldPart = `${title}: `;
         currentPage.drawText(boldPart, {
-          x: MARGIN_LEFT + 14,
+          x: MARGIN_LEFT + 12,
           y: cursorY,
           size: fontSize,
           font: fontBold,
@@ -217,7 +217,7 @@ async function generateDocumentationPdf() {
         });
         const restLine = line.slice(boldPart.length);
         currentPage.drawText(restLine, {
-          x: MARGIN_LEFT + 14 + titleWidth,
+          x: MARGIN_LEFT + 12 + titleWidth,
           y: cursorY,
           size: fontSize,
           font: fontRegular,
@@ -225,7 +225,7 @@ async function generateDocumentationPdf() {
         });
       } else {
         currentPage.drawText(line, {
-          x: MARGIN_LEFT + 14,
+          x: MARGIN_LEFT + 12,
           y: cursorY,
           size: fontSize,
           font: fontRegular,
@@ -234,22 +234,22 @@ async function generateDocumentationPdf() {
       }
       cursorY -= lineSpacing;
     }
-    cursorY -= 2;
+    cursorY -= 1.5;
   }
 
-  function drawCallout(title, body) {
-    const fontSize = 8.5;
-    const lineSpacing = 12;
-    const bodyLines = wrapText(body, CONTENT_WIDTH - 24, fontRegular, fontSize);
-    const boxHeight = 22 + (bodyLines.length * lineSpacing);
+  function drawCallout(title, body, accentColor = colorSecondary) {
+    const fontSize = 8;
+    const lineSpacing = 11;
+    const bodyLines = wrapText(body, CONTENT_WIDTH - 22, fontRegular, fontSize);
+    const boxHeight = 18 + (bodyLines.length * lineSpacing);
 
-    checkPageSpace(boxHeight + 10);
-    cursorY -= 4;
+    checkPageSpace(boxHeight + 8);
+    cursorY -= 3;
 
     // Background Card
     currentPage.drawRectangle({
       x: MARGIN_LEFT,
-      y: cursorY - boxHeight + 14,
+      y: cursorY - boxHeight + 12,
       width: CONTENT_WIDTH,
       height: boxHeight,
       color: colorCardBg,
@@ -260,25 +260,25 @@ async function generateDocumentationPdf() {
     // Left accent strip
     currentPage.drawRectangle({
       x: MARGIN_LEFT,
-      y: cursorY - boxHeight + 14,
-      width: 4,
+      y: cursorY - boxHeight + 12,
+      width: 3.5,
       height: boxHeight,
-      color: colorSecondary,
+      color: accentColor,
     });
 
     // Title
     currentPage.drawText(title, {
-      x: MARGIN_LEFT + 14,
-      y: cursorY - 2,
-      size: 9.5,
+      x: MARGIN_LEFT + 12,
+      y: cursorY - 1,
+      size: 8.5,
       font: fontBold,
       color: colorPrimary,
     });
 
-    let bY = cursorY - 16;
+    let bY = cursorY - 14;
     for (const line of bodyLines) {
       currentPage.drawText(line, {
-        x: MARGIN_LEFT + 14,
+        x: MARGIN_LEFT + 12,
         y: bY,
         size: fontSize,
         font: fontRegular,
@@ -287,18 +287,18 @@ async function generateDocumentationPdf() {
       bY -= lineSpacing;
     }
 
-    cursorY -= (boxHeight + 8);
+    cursorY -= (boxHeight + 6);
   }
 
   function drawTable(headers, rows, colWidths) {
-    const rowHeight = 18;
+    const rowHeight = 16;
     const totalHeight = (rows.length + 1) * rowHeight;
-    checkPageSpace(totalHeight + 15);
+    checkPageSpace(totalHeight + 12);
 
     // Header Row Background
     currentPage.drawRectangle({
       x: MARGIN_LEFT,
-      y: cursorY - rowHeight + 4,
+      y: cursorY - rowHeight + 3,
       width: CONTENT_WIDTH,
       height: rowHeight,
       color: rgb(0.12, 0.16, 0.24),
@@ -307,9 +307,9 @@ async function generateDocumentationPdf() {
     let currentX = MARGIN_LEFT;
     for (let i = 0; i < headers.length; i++) {
       currentPage.drawText(headers[i], {
-        x: currentX + 6,
+        x: currentX + 5,
         y: cursorY - 8,
-        size: 7.5,
+        size: 7,
         font: fontBold,
         color: colorWhite,
       });
@@ -323,7 +323,7 @@ async function generateDocumentationPdf() {
       if (isAlt) {
         currentPage.drawRectangle({
           x: MARGIN_LEFT,
-          y: cursorY - rowHeight + 4,
+          y: cursorY - rowHeight + 3,
           width: CONTENT_WIDTH,
           height: rowHeight,
           color: rgb(0.97, 0.98, 0.99),
@@ -332,8 +332,8 @@ async function generateDocumentationPdf() {
 
       // Bottom border for row
       currentPage.drawLine({
-        start: { x: MARGIN_LEFT, y: cursorY - rowHeight + 4 },
-        end: { x: MARGIN_LEFT + CONTENT_WIDTH, y: cursorY - rowHeight + 4 },
+        start: { x: MARGIN_LEFT, y: cursorY - rowHeight + 3 },
+        end: { x: MARGIN_LEFT + CONTENT_WIDTH, y: cursorY - rowHeight + 3 },
         thickness: 0.5,
         color: colorBorder,
       });
@@ -343,9 +343,9 @@ async function generateDocumentationPdf() {
       for (let c = 0; c < row.length; c++) {
         const text = String(row[c]);
         currentPage.drawText(text, {
-          x: cellX + 6,
+          x: cellX + 5,
           y: cursorY - 8,
-          size: 7.5,
+          size: 7,
           font: c === 0 ? fontBold : fontRegular,
           color: c === 0 ? colorPrimary : colorText,
         });
@@ -353,84 +353,85 @@ async function generateDocumentationPdf() {
       }
       cursorY -= rowHeight;
     }
-    cursorY -= 10;
+    cursorY -= 8;
   }
 
   // ==========================================
-  // PAGE 1: COVER PAGE
+  // PAGE 1: COVER PAGE & EXECUTIVE SUMMARY
   // ==========================================
   addNewPage(true);
 
   // Top decorative color block
   currentPage.drawRectangle({
     x: 0,
-    y: PAGE_HEIGHT - 180,
+    y: PAGE_HEIGHT - 170,
     width: PAGE_WIDTH,
-    height: 180,
+    height: 170,
     color: colorHeaderBg,
   });
 
   currentPage.drawRectangle({
     x: 0,
-    y: PAGE_HEIGHT - 186,
+    y: PAGE_HEIGHT - 175,
     width: PAGE_WIDTH,
-    height: 6,
+    height: 5,
     color: colorSecondary,
   });
 
   // Cover Page Title
   currentPage.drawText("STUDENT NOTES HUB & AI TUTOR", {
     x: MARGIN_LEFT,
-    y: PAGE_HEIGHT - 70,
-    size: 22,
+    y: PAGE_HEIGHT - 65,
+    size: 20,
     font: fontBold,
     color: colorWhite,
   });
 
   currentPage.drawText("Comprehensive System Architecture & Technical Specification", {
     x: MARGIN_LEFT,
-    y: PAGE_HEIGHT - 96,
-    size: 11,
+    y: PAGE_HEIGHT - 88,
+    size: 10.5,
     font: fontRegular,
     color: rgb(0.85, 0.88, 0.95),
   });
 
-  currentPage.drawText("Full-Stack Node.js/Express  *  React 19  *  Google Gemini 3.6 Flash  *  ChromaDB Cloud Vector RAG", {
+  currentPage.drawText("Full-Stack Node.js/Express * React 19 * Google Gemini 3.6 Flash * ChromaDB Cloud Vector RAG", {
     x: MARGIN_LEFT,
-    y: PAGE_HEIGHT - 120,
-    size: 8.5,
+    y: PAGE_HEIGHT - 110,
+    size: 8,
     font: fontBold,
     color: rgb(0.95, 0.70, 0.20),
   });
 
-  cursorY = PAGE_HEIGHT - 215;
+  cursorY = PAGE_HEIGHT - 195;
 
   // Metadata Card
-  drawCallout("DOCUMENT INFORMATION & METADATA", 
-    "Project: Interactive Course Notes & Smart AI Tutor Platform\n" +
+  drawCallout("DOCUMENT INFORMATION & SYSTEM METADATA", 
+    "Project: Interactive Course Notes Hub & Smart AI Study Tutor Platform\n" +
     "Authors: AI Engineering Team & System Architects\n" +
     "Runtime Environment: Node.js 22 (LTS) | React 19 SPA | Express Server Engine\n" +
     "Vector Database: ChromaDB Managed Cloud Client ('rag-notes-application1')\n" +
     "Primary Generative Model: Google Gemini 3.6 Flash (@google/genai SDK)\n" +
     "Document Format Compatibility: PDF (Vector/Canvas), Word (.docx), PowerPoint (.pptx), Markdown, Code (.py)\n" +
+    "Synchronization Model: Continuous Background Auto-Sync (Event-Driven & Periodic Reconciliation)\n" +
     "Status: Production Ready | Fully Tested & Deployed"
   );
 
-  cursorY -= 10;
+  cursorY -= 6;
   drawHeading("Executive Overview", 1);
   drawParagraph(
     "The Student Notes Hub & AI Tutor is an enterprise-grade academic platform engineered to bridge the gap between static lecture materials and active, personalized learning. Built on modern TypeScript, it unifies dual operational portals: a feature-packed Teacher & Instructor Studio for curriculum compilation, slide extraction, and vector database indexing, alongside an immersive Student Study Hub featuring side-by-side note reading, text-to-speech, interactive self-assessment exams, and a context-grounded AI Tutor."
   );
 
   drawParagraph(
-    "Unlike generic LLM wrappers, this system implements a strict Retrieval-Augmented Generation (RAG) architecture. When students ask questions or generate exam questions, the engine grounds prompts against exact slide sections and page citations indexed in ChromaDB Cloud, guaranteeing factual fidelity and preventing hallucinations."
+    "Unlike generic LLM wrappers, this system implements a strict Retrieval-Augmented Generation (RAG) architecture. When students ask questions or generate practice exams, the engine grounds prompts against exact slide sections and page citations indexed in ChromaDB Cloud, guaranteeing factual fidelity and preventing hallucinations."
   );
 
-  cursorY -= 8;
+  cursorY -= 4;
   drawHeading("Key Technical Capabilities", 2);
   drawBullet("High-Fidelity Dual-View Reading", "Presents original slide diagrams, equations, and figures via a hardware-accelerated PDF canvas viewer synchronized side-by-side with structured, readable markdown notes.");
+  drawBullet("Continuous Automatic Vector Sync", "All course documents, revisions, and announcements automatically synchronize to ChromaDB Cloud in the background without requiring manual intervention.");
   drawBullet("Real-Time Multi-Provider AI Routing", "Prioritizes Google Gemini 3.6 Flash for sub-second responses with seamless automatic fallback to OpenRouter (Llama 3.3 70B, DeepSeek) and local semantic heuristic engines.");
-  drawBullet("ChromaDB Cloud Vector Indexing", "Deconstructs multi-megabyte lecture presentations into clean, semantically embedded topic units with metadata tracking document IDs, subjects, and page numbers.");
   drawBullet("Automated Practice Exam Generation", "Instantly compiles balanced, 4-choice multiple-choice quizzes complete with verified answer keys, concept references, and rationale explanations.");
 
   // ==========================================
@@ -444,15 +445,15 @@ async function generateDocumentationPdf() {
 
   drawCallout("High-Level Data Flow Architecture",
     "[Client Layer: React 19 SPA]\n" +
-    "  |-- Student Portal (Viewer, AI Side Panel, Audio Player, Quiz Engine)\n" +
-    "  |-- Teacher Studio (Document Uploader, Metadata Editor, Announcement Hub)\n" +
+    "  |-- Student Portal (Viewer, AI Side Panel, Audio Player, Quiz Engine, Bookmarks)\n" +
+    "  |-- Teacher Studio (Document Uploader, Metadata Editor, Merge Studio, Announcements)\n" +
     "        |\n" +
     "        v [HTTP / JSON REST API with Authorization & Session State]\n" +
     "[Backend Layer: Express 4.x + Node.js 22 Engine]\n" +
-    "  |-- File Parsing Engine (pdf-parse, mammoth, adm-zip for pptx)\n" +
-    "  |-- Chroma Vector Sync Service (CloudClient / @chroma-core/chroma-client)\n" +
+    "  |-- File Parsing Engine (pdf-parse, mammoth, adm-zip for pptx XML extraction)\n" +
+    "  |-- ChromaDB Auto-Sync Service (Continuous Background Reconciler & Embedding Engine)\n" +
     "  |-- Multi-Provider AI Router (Gemini 3.6 Flash -> OpenRouter -> Groq -> Local RAG)\n" +
-    "  |-- Storage Engine (Persistent JSON file cache + Server Sync Gateway)"
+    "  |-- Storage Engine (Persistent JSON file cache + Binary PDF stream cache)"
   );
 
   drawHeading("2. Technology Stack & Framework Specifications", 1);
@@ -472,22 +473,64 @@ async function generateDocumentationPdf() {
       ["Office Doc Parsers", "Mammoth & Adm-Zip", "1.12.2", "DOCX and PPTX slide XML deconstruction"],
       ["PDF Ingestion", "pdf-parse", "2.4.5", "Raw text, page split, and metadata extraction"]
     ],
-    [100, 130, 60, 226]
+    [95, 125, 55, 245]
   );
 
   drawHeading("3. Dual-Portal Deployment Architecture", 1);
   drawParagraph(
     "The application natively supports three distinct deployment configurations via environment variables or URL query routing:"
   );
-  drawBullet("Unified Mode (Default)", "Both the Teacher Studio and Student Portal exist in the same instance, allowing administrators to toggle portals seamlessly via header navigation or URL parameters.");
+  drawBullet("Unified Mode (Default)", "Both the Teacher Studio and Student Portal exist in the same instance, allowing instructors to switch portals seamlessly via header navigation or URL parameters.");
   drawBullet("Standalone Student Mode (VITE_PORTAL_MODE=student)", "Locks the interface into a secure, read-only student experience. All administrative studio endpoints and editor buttons are stripped from the DOM.");
   drawBullet("Standalone Teacher Mode (VITE_PORTAL_MODE=teacher)", "Serves only the curriculum management studio. Used in institutional setups where instructors manage notes behind internal university VPNs.");
 
   // ==========================================
-  // PAGE 3: AI ORCHESTRATION & VECTOR RAG
+  // PAGE 3: AUTOMATIC CHROMADB CLOUD VECTOR SYNCHRONIZATION
   // ==========================================
   addNewPage(false);
-  drawHeading("4. AI & Retrieval-Augmented Generation (RAG) Subsystem", 1);
+  drawHeading("4. Automatic ChromaDB Cloud Vector Synchronization Engine", 1);
+  drawParagraph(
+    "To deliver zero-maintenance operational reliability, the system features a Continuous Background Auto-Sync Engine. Whenever course documents or announcements are modified in any way, the backend reconciles and persists the vector space in ChromaDB Cloud without requiring manual human intervention."
+  );
+
+  drawCallout("Core Principles of the Auto-Sync Engine",
+    "- 100% Background Execution: HTTP responses return immediately; embedding and upserting occur asynchronously.\n" +
+    "- Debounced Batching: Rapid edits or multi-file uploads are batched (1.2s delay) to eliminate redundant API calls.\n" +
+    "- Deduplication by Identity: Previous chunks for a document ID are purged prior to upsert, preventing duplicate vectors.\n" +
+    "- Self-Healing Reconciliation: A 5-minute background timer verifies vector parity and recovers from network interruptions.\n" +
+    "- Startup Ingestion: On server boot, all persisted files are immediately verified and indexed into ChromaDB Cloud.",
+    colorAccent
+  );
+
+  drawHeading("Event-Driven Lifecycle Triggers", 2);
+  drawParagraph(
+    "Automatic vector synchronization is wired directly into the document lifecycle at the persistence layer:"
+  );
+
+  drawBullet("Document Uploads (POST /api/upload-document)", "Incoming PDFs, Word files, or PPTX presentations are parsed into per-page chunks and queued for immediate vector indexing.");
+  drawBullet("Document Metadata Edits (PUT /api/documents/:id)", "Renaming documents, changing subject classifications, or updating unit descriptions automatically re-indexes chunks with updated semantic labels.");
+  drawBullet("Publication Toggles (PUT /api/documents/:id/publish)", "Modifications to visibility flags update the collection metadata so the RAG search honors active publication rules.");
+  drawBullet("Document Deletions (DELETE /api/documents/:id)", "Permanently deletes all chunk IDs associated with the target document from the cloud collection.");
+  drawBullet("Document Merging & Duplication (POST /api/documents)", "Newly generated comprehensive study guides are immediately vector-embedded upon creation.");
+  drawBullet("Broadcast Announcements (POST & DELETE /api/announcements)", "Exam notices and syllabus updates are indexed as high-priority vector targets available to the AI Tutor.");
+
+  drawHeading("Dense Semantic Vector Generation (384 Dimensions)", 2);
+  drawParagraph(
+    "The system employs a custom 384-dimensional dense semantic embedding engine (RobustEmbeddingFunction). It uses n-gram tokenization (unigrams, bigrams, trigrams), character 3-grams for morphological robustness, dual-seed sign hashing, tanh non-linear activation, and L2 unit-norm projection. This completely eliminates ONNX/Protobuf native C++ crashes in containerized environments while delivering high-accuracy cosine similarity retrieval."
+  );
+
+  drawCallout("ChromaDB Cloud Connection Configuration",
+    "Database Target: 'rag-notes-application1'\n" +
+    "Tenant ID: '0f94ea0f-37ba-4909-88f1-4ee0f0e15dd7'\n" +
+    "Collection Name: 'course_notes_rag'\n" +
+    "Batch Size: 50 chunks per upsert pass | Cloud Protocol: HTTPS CloudClient"
+  );
+
+  // ==========================================
+  // PAGE 4: AI ORCHESTRATION & PRACTICE EXAM ENGINE
+  // ==========================================
+  addNewPage(false);
+  drawHeading("5. AI & Retrieval-Augmented Generation (RAG) Subsystem", 1);
   drawParagraph(
     "The hallmark of the platform is its grounded intelligence pipeline. Rather than dumping raw text into a single prompt, the system utilizes a multi-step semantic retrieval workflow:"
   );
@@ -506,7 +549,7 @@ async function generateDocumentationPdf() {
     "- If the question cannot be answered from the provided notes, politely explain that the concept is not covered in the current syllabus."
   );
 
-  drawHeading("5. Automated Quiz & Assessment Engine", 1);
+  drawHeading("6. Automated Quiz & Assessment Engine", 1);
   drawParagraph(
     "Students can generate customized practice exams for any uploaded lecture document. The backend leverages Gemini's structured responseMimeType: 'application/json' to enforce a strict JSON schema:"
   );
@@ -521,14 +564,14 @@ async function generateDocumentationPdf() {
       ["explanation", "string", "Comprehensive breakdown explaining why the answer is correct"],
       ["topic", "string", "The specific curriculum unit or lecture concept tested"]
     ],
-    [90, 80, 346]
+    [85, 75, 360]
   );
 
   // ==========================================
-  // PAGE 4: DOCUMENT INGESTION & UI VIEWER
+  // PAGE 5: DOCUMENT INGESTION & UI VIEWER
   // ==========================================
   addNewPage(false);
-  drawHeading("6. Multi-Format Document Ingestion Engine", 1);
+  drawHeading("7. Multi-Format Document Ingestion Engine", 1);
   drawParagraph(
     "Instructors can upload course materials in multiple industry-standard formats. The ingestion pipeline normalizes all documents into a standardized NoteDocument schema:"
   );
@@ -538,7 +581,7 @@ async function generateDocumentationPdf() {
   drawBullet("PowerPoint Presentations (.pptx)", "Decompressed via adm-zip to parse slide XML structures (`ppt/slides/slide{N}.xml`), extracting bullet text and slide speaker notes per slide.");
   drawBullet("Source Code Files (.py, .ts, .js, .java)", "Segmented by function and class definitions, wrapped in syntax-highlighted code blocks, and indexed for programming coursework.");
 
-  drawHeading("7. High-Fidelity UI & Document Viewer Architecture", 1);
+  drawHeading("8. High-Fidelity UI & Document Viewer Architecture", 1);
   drawParagraph(
     "The DocumentModalViewer component offers a desktop-grade study environment optimized for long reading sessions:"
   );
@@ -558,30 +601,32 @@ async function generateDocumentationPdf() {
   );
 
   // ==========================================
-  // PAGE 5: REST API & DEPLOYMENT GUIDE
+  // PAGE 6: REST API & DEPLOYMENT GUIDE
   // ==========================================
   addNewPage(false);
-  drawHeading("8. Complete REST API Endpoint Reference", 1);
+  drawHeading("9. Complete REST API Endpoint Reference", 1);
 
   drawTable(
     ["Method", "Endpoint", "Payload / Parameters", "Description"],
     [
-      ["GET", "/api/documents", "None", "Returns list of all published or uploaded documents"],
-      ["POST", "/api/documents", "{ title, subject, unit, pdfUrl, sections }", "Uploads and persists a new course document"],
-      ["PUT", "/api/documents/:id", "{ title, subject, unit, isPublished }", "Updates document metadata or publication state"],
-      ["DELETE", "/api/documents/:id", "None", "Permanently deletes document and vector indexes"],
-      ["POST", "/api/chat", "{ prompt, context, activeDocument }", "Executes grounded RAG chat against notes"],
-      ["POST", "/api/generate-quiz", "{ docId, documentTitle, content, count }", "Compiles a 4-choice practice exam from notes"],
-      ["POST", "/api/parse-document", "Multipart/Form-Data (file)", "Parses PDF/DOCX/PPTX into structured sections"],
+      ["GET", "/api/documents", "role=student|all", "Returns list of published or all documents"],
+      ["POST", "/api/upload-document", "Multipart / Base64 File", "Uploads, parses & auto-syncs to ChromaDB"],
+      ["POST", "/api/documents", "{ title, subject, unit, ... }", "Creates new document & triggers auto-sync"],
+      ["PUT", "/api/documents/:id", "{ title, subject, unit }", "Updates metadata & re-indexes in ChromaDB"],
+      ["PUT", "/api/documents/:id/publish", "{ isPublished: boolean }", "Toggles student visibility & auto-syncs"],
+      ["DELETE", "/api/documents/:id", "None", "Deletes document and purges ChromaDB vectors"],
+      ["POST", "/api/documents/sync", "{ documents, overwrite }", "Batch synchronizes documents & vector database"],
+      ["POST", "/api/chat", "{ prompt, activeDocument }", "Executes grounded RAG chat against vectors"],
+      ["POST", "/api/generate-quiz", "{ docId, content, count }", "Compiles a 4-choice practice exam via Gemini"],
       ["GET", "/api/announcements", "None", "Returns active broadcast announcements"],
-      ["POST", "/api/announcements", "{ title, content, priority }", "Posts a new course announcement"],
+      ["POST", "/api/announcements", "{ title, content, priority }", "Posts an announcement & auto-indexes to Chroma"],
       ["GET", "/api/chroma/status", "None", "Checks ChromaDB cloud vector database health"],
-      ["POST", "/api/sync-with-teacher", "{ teacherUrl }", "Syncs student instance with remote teacher deployment"]
+      ["GET", "/api/documentation/pdf", "None", "Streams technical documentation PDF"]
     ],
-    [55, 125, 160, 176]
+    [50, 130, 145, 195]
   );
 
-  drawHeading("9. Environment Configuration & Deployment", 1);
+  drawHeading("10. Environment Configuration & Deployment", 1);
   drawParagraph(
     "The application is container-ready and deploys effortlessly to Cloud Run, Render, or Docker:"
   );
@@ -589,7 +634,8 @@ async function generateDocumentationPdf() {
   drawCallout("Recommended Environment Variables (.env)",
     "GEMINI_API_KEY=your_gemini_api_key       # Google Gemini 3.6 Flash access\n" +
     "CHROMA_API_KEY=your_chroma_key           # ChromaDB Cloud authentication\n" +
-    "CHROMA_DATABASE=default_database          # Chroma database target\n" +
+    "CHROMA_TENANT=0f94ea0f-...                # Chroma tenant UUID\n" +
+    "CHROMA_DATABASE=rag-notes-application1    # Chroma database target\n" +
     "OPENROUTER_API_KEY=optional_key          # Fallback LLM provider\n" +
     "GROQ_API_KEY=optional_key                # High-speed fallback provider\n" +
     "VITE_PORTAL_MODE=student|teacher          # Optional hard portal lock\n" +
@@ -599,8 +645,8 @@ async function generateDocumentationPdf() {
   drawParagraph(
     "To build and launch the production container, execute:\n" +
     "  1. npm install --production=false\n" +
-    "  2. npm run build  (compiles frontend Vite bundle & bundles server.ts via esbuild to dist/server.cjs)\n" +
-    "  3. npm start      (launches compiled CommonJS server on port 3000)"
+    "  2. npm run build  (generates technical PDF, compiles Vite bundle, and bundles server.ts to dist/server.cjs)\n" +
+    "  3. npm start      (launches compiled server on port 3000)"
   );
 
   // Add Page Numbers & Footers to all pages
@@ -609,26 +655,26 @@ async function generateDocumentationPdf() {
     if (!p.isCover) {
       // Bottom divider
       p.page.drawLine({
-        start: { x: MARGIN_LEFT, y: 36 },
-        end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: 36 },
+        start: { x: MARGIN_LEFT, y: 34 },
+        end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: 34 },
         thickness: 0.5,
         color: colorBorder,
       });
 
-      p.page.drawText("Course Notes Hub & AI Tutor  --  Full Technical Documentation", {
+      p.page.drawText("Course Notes Hub & AI Tutor -- Full Technical Documentation", {
         x: MARGIN_LEFT,
-        y: 24,
-        size: 7.5,
+        y: 23,
+        size: 7,
         font: fontRegular,
         color: colorMuted,
       });
 
       const pageStr = `Page ${p.number} of ${totalPages}`;
-      const pageStrWidth = fontRegular.widthOfTextAtSize(pageStr, 7.5);
+      const pageStrWidth = fontRegular.widthOfTextAtSize(pageStr, 7);
       p.page.drawText(pageStr, {
         x: PAGE_WIDTH - MARGIN_RIGHT - pageStrWidth,
-        y: 24,
-        size: 7.5,
+        y: 23,
+        size: 7,
         font: fontBold,
         color: colorMuted,
       });

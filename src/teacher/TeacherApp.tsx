@@ -6,7 +6,7 @@ import { AiAssistantModal } from "../components/AiAssistantModal";
 import { DocumentMergeModal } from "./DocumentMergeModal";
 import { DocumentRenameModal } from "./DocumentRenameModal";
 import { DocumentDetailsModal } from "./DocumentDetailsModal";
-import { Layers, ArrowLeft, Eye, EyeOff, FileText } from "lucide-react";
+import { Layers, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -379,17 +379,6 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
               <span>Back to Studio Dashboard</span>
             </button>
           )}
-
-          <a
-            href="/api/documentation/pdf"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-1.5 bg-purple-950/60 hover:bg-purple-900/80 text-purple-200 border border-purple-800/60 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
-            title="View Technical Documentation (PDF)"
-          >
-            <FileText className="w-3.5 h-3.5 text-purple-300" />
-            <span className="hidden sm:inline">Documentation (PDF)</span>
-          </a>
         </div>
       </nav>
 
