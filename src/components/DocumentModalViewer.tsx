@@ -434,7 +434,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
   );
 
   const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
-  const [pptViewerMode, setPptViewerMode] = useState<"slides" | "office" | "google">("slides");
+  const [pptViewerMode, setPptViewerMode] = useState<"slides" | "office" | "google">("google");
 
   const absolutePptUrl = useMemo(() => {
     if (typeof window === "undefined" || !activeDoc) return "";
@@ -987,147 +987,59 @@ export const DocumentModalViewer: React.FC<Props> = ({
               className="transition-all duration-150 ease-out my-2 sm:my-4 w-full flex flex-col items-center"
               style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "top center" }}
             >
-              {/* PowerPoint Presentation Header Banner */}
-              {isPptxDoc && (
-                <div className="w-full sm:w-[980px] max-w-full sm:max-w-[95vw] mb-6 p-4 bg-gradient-to-r from-orange-950/60 via-slate-900/90 to-slate-900/90 border border-orange-500/40 rounded-2xl text-xs text-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
-                  <div className="flex items-start sm:items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-orange-500/20 text-orange-400 shrink-0 font-extrabold text-sm flex items-center justify-center">
-                      PPT
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-orange-200 text-sm">{activeDoc.title}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 font-mono border border-orange-500/30">
-                          PowerPoint Slide Deck
-                        </span>
-                      </div>
-                      <p className="text-slate-300 text-xs mt-1 leading-relaxed">
-                        Original presentation slides shown as uploaded for teacher and students • {activeSections.length} slides
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 shrink-0 self-stretch sm:self-auto justify-end">
-                    {/* Mode Toggle Pills */}
-                    <div className="flex items-center bg-slate-950/90 p-1 rounded-xl border border-slate-700/80">
-                      <button
-                        type="button"
-                        onClick={() => setPptViewerMode("slides")}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                          pptViewerMode === "slides"
-                            ? "bg-orange-500 text-slate-950 shadow-sm font-bold"
-                            : "text-slate-400 hover:text-slate-200"
-                        }`}
-                        title="View slides as individual presentation cards"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>Slide Deck</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPptViewerMode("office")}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                          pptViewerMode === "office"
-                            ? "bg-orange-500 text-slate-950 shadow-sm font-bold"
-                            : "text-slate-400 hover:text-slate-200"
-                        }`}
-                        title="Display original presentation via Microsoft Office Live Web Viewer"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        <span>Office Live</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPptViewerMode("google")}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                          pptViewerMode === "google"
-                            ? "bg-orange-500 text-slate-950 shadow-sm font-bold"
-                            : "text-slate-400 hover:text-slate-200"
-                        }`}
-                        title="Display original presentation via Google Slides Viewer"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>Google Viewer</span>
-                      </button>
-                    </div>
-
-                    <a
-                      href={activeDoc?.downloadUrl || activeDoc?.originalFileUrl || `/api/download/${activeDoc?.id}`}
-                      download={activeDoc?.originalFileName || `${activeDoc?.title || "presentation"}.pptx`}
-                      className="px-3.5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
-                      title="Download the original PowerPoint presentation file (.pptx)"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Download PPT</span>
-                    </a>
-                    
-                    {pptViewerMode === "slides" && (
-                      <button
-                        type="button"
-                        onClick={() => setSlideDeckTheme(prev => prev === "dark" ? "light" : "dark")}
-                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                        title="Switch between Dark Slide Deck and Light Paper styling"
-                      >
-                        {slideDeckTheme === "dark" ? (
-                          <>
-                            <Sun className="w-4 h-4 text-amber-400" />
-                            <span>Light Theme</span>
-                          </>
-                        ) : (
-                          <>
-                            <Moon className="w-4 h-4 text-sky-400" />
-                            <span>Dark Theme</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Native PowerPoint Presentation Web Embed (Office Live / Google Slides) */}
+              {/* Native PowerPoint Presentation Web Embed (Only the PPT) */}
               {isPptxDoc && (pptViewerMode === "office" || pptViewerMode === "google") ? (
-                <div className="w-full sm:w-[980px] max-w-full sm:max-w-[95vw] h-[750px] bg-slate-950 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col mb-12">
-                  <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-300">
+                <div className="w-full max-w-[1240px] h-[calc(100vh-6.5rem)] min-h-[640px] bg-slate-950 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col mb-4">
+                  <div className="bg-[#111927] border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-300 shrink-0">
                     <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span className="font-semibold text-slate-200">
-                        {pptViewerMode === "office" ? "Microsoft PowerPoint Web Viewer (Interactive)" : "Google Slides Viewer (Interactive)"}
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span className="font-semibold text-slate-200 truncate max-w-xs sm:max-w-md">
+                        {activeDoc.title}
                       </span>
                     </div>
-                    <a
-                      href={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium hover:underline"
-                    >
-                      <span>Open Fullscreen Tab</span>
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700/70 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setPptViewerMode("google")}
+                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
+                            pptViewerMode === "google" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          Google
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPptViewerMode("office")}
+                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
+                            pptViewerMode === "office" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
+                          }`}
+                        >
+                          Office Live
+                        </button>
+                      </div>
+                      <a
+                        href={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium hover:underline text-xs"
+                        title="Open in Fullscreen Tab"
+                      >
+                        <span>Fullscreen</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
                   </div>
                   <iframe
                     src={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
                     className="w-full flex-1 border-0 bg-slate-950"
-                    title="Live Presentation Viewer"
+                    title="PowerPoint Presentation"
                     allowFullScreen
                   />
                 </div>
-              ) : isPptxDoc && !activeSections.some(s => s.slideImageUrl) && !activeDoc?.slideImages?.length ? (
-                /* Notice banner when slide images haven't been compiled (e.g. on default Node Render deployment) */
-                <div className="w-full sm:w-[980px] max-w-full sm:max-w-[95vw] mb-4 p-3 bg-amber-950/40 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-between gap-3 shadow-md">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Want to view this PowerPoint with 100% original shapes, fonts and colors?</span>
-                  </div>
-                  <button
-                    onClick={() => setPptViewerMode("office")}
-                    className="px-3 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs shrink-0 cursor-pointer shadow-xs"
-                  >
-                    Open Office Live View
-                  </button>
-                </div>
               ) : null}
 
-              {isContinuousScroll ? (
+              {(!isPptxDoc || pptViewerMode === "slides") && (isContinuousScroll ? (
                 /* Continuous All Pages Presentation Slide Deck Stack */
                 <div id="doc-page-container" className="flex flex-col items-center gap-8 sm:gap-12 w-full pb-20">
                   {activeSections.map((sec, idx) => {
@@ -1181,7 +1093,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     handleCopyCode={handleCopyCode}
                   />
                 )
-              )}
+              ))}
             </div>
           )}
 
