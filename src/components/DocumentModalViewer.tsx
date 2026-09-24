@@ -444,12 +444,12 @@ export const DocumentModalViewer: React.FC<Props> = ({
   }, [activeDoc]);
 
   const officeEmbedUrl = useMemo(() => {
-    return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absolutePptUrl)}`;
-  }, [absolutePptUrl]);
+    return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(absolutePptUrl)}&wdSlideIndex=${currentPage}#slide=${currentPage}`;
+  }, [absolutePptUrl, currentPage]);
 
   const googleEmbedUrl = useMemo(() => {
-    return `https://docs.google.com/viewer?url=${encodeURIComponent(absolutePptUrl)}&embedded=true`;
-  }, [absolutePptUrl]);
+    return `https://docs.google.com/viewer?url=${encodeURIComponent(absolutePptUrl)}&embedded=true#page=${currentPage}`;
+  }, [absolutePptUrl, currentPage]);
 
   useEffect(() => {
     if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) {
@@ -840,9 +840,9 @@ export const DocumentModalViewer: React.FC<Props> = ({
             <aside className="fixed inset-y-0 left-0 top-14 w-64 sm:static sm:w-56 bg-[#252526] border-r border-[#3c3c3c] flex flex-col shrink-0 z-40 sm:z-10 shadow-2xl sm:shadow-none transition-all">
               <div className="p-3 border-b border-[#3c3c3c] flex items-center justify-between text-xs font-semibold text-slate-400">
                 <span className="flex items-center gap-1.5">
-                  <Grid className="w-3.5 h-3.5 text-amber-500" /> Page Thumbnails
+                  <Grid className="w-3.5 h-3.5 text-amber-500" /> {isPptxDoc ? "Slide Thumbnails" : "Page Thumbnails"}
                 </span>
-                <span className="text-[11px] text-slate-500">{totalPages} Pages</span>
+                <span className="text-[11px] text-slate-500">{totalPages} {isPptxDoc ? "Slides" : "Pages"}</span>
               </div>
 
               <div className="flex-1 overflow-y-auto p-3 space-y-3">
@@ -907,7 +907,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                         <span
                           className={`font-bold ${isSelected ? "text-amber-400" : "text-slate-400"}`}
                         >
-                          Page {pageNum}
+                          {isPptxDoc ? "Slide" : "Page"} {pageNum}
                         </span>
                         <button
                           onClick={(e) => {
@@ -989,14 +989,40 @@ export const DocumentModalViewer: React.FC<Props> = ({
             >
               {/* Native PowerPoint Presentation Web Embed (Only the PPT) */}
               {isPptxDoc && (pptViewerMode === "office" || pptViewerMode === "google") ? (
-                <div className="w-full max-w-[1240px] h-[calc(100vh-6.5rem)] min-h-[640px] bg-slate-950 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col mb-4">
+                <div className="w-full max-w-[1280px] h-[calc(100vh-6.5rem)] min-h-[640px] bg-slate-950 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl flex flex-col mb-4">
                   <div className="bg-[#111927] border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-300 shrink-0">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span className="font-semibold text-slate-200 truncate max-w-xs sm:max-w-md">
+                      <span className="font-semibold text-slate-200 truncate max-w-xs sm:max-w-sm">
                         {activeDoc.title}
                       </span>
                     </div>
+
+                    {/* Direct Slide Navigation Controls synced with Thumbnails */}
+                    <div className="flex items-center gap-1.5 bg-slate-900/90 px-2 py-1 rounded-lg border border-slate-700/60 font-mono text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                        disabled={currentPage <= 1}
+                        className="p-1 rounded hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white cursor-pointer transition-colors"
+                        title="Previous Slide"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="px-1.5 font-bold text-amber-400">
+                        Slide {currentPage} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                        disabled={currentPage >= totalPages}
+                        className="p-1 rounded hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed text-slate-300 hover:text-white cursor-pointer transition-colors"
+                        title="Next Slide"
+                      >
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
                     <div className="flex items-center gap-2.5">
                       <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700/70 text-[11px]">
                         <button
@@ -1005,6 +1031,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                           className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
                             pptViewerMode === "google" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
                           }`}
+                          title="Google Slides Viewer"
                         >
                           Google
                         </button>
@@ -1014,8 +1041,19 @@ export const DocumentModalViewer: React.FC<Props> = ({
                           className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
                             pptViewerMode === "office" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
                           }`}
+                          title="Microsoft Office Live Viewer"
                         >
                           Office Live
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPptViewerMode("slides")}
+                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
+                            pptViewerMode === "slides" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
+                          }`}
+                          title="Switch to Slide Cards View"
+                        >
+                          Cards
                         </button>
                       </div>
                       <a
@@ -1031,9 +1069,10 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     </div>
                   </div>
                   <iframe
+                    key={`${pptViewerMode}-${currentPage}`}
                     src={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
                     className="w-full flex-1 border-0 bg-slate-950"
-                    title="PowerPoint Presentation"
+                    title={`PowerPoint Presentation - Slide ${currentPage}`}
                     allowFullScreen
                   />
                 </div>
@@ -1101,9 +1140,9 @@ export const DocumentModalViewer: React.FC<Props> = ({
           {activeView !== "quiz" && viewMode !== "pdf" && (
             <div className="fixed bottom-6 left-6 z-30 flex items-center gap-2 bg-white/95 dark:bg-[#202025]/95 backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-slate-300 dark:border-[#383842] shadow-xl text-xs font-mono font-bold text-slate-800 dark:text-slate-100">
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#121215] border border-slate-300 dark:border-[#3a3a42] font-extrabold text-slate-900 dark:text-white">
-                {currentPage}
+                {isPptxDoc ? `Slide ${currentPage}` : currentPage}
               </span>
-              <span className="text-slate-400">{totalPages}</span>
+              <span className="text-slate-400">{isPptxDoc ? `of ${totalPages}` : totalPages}</span>
             </div>
           )}
 

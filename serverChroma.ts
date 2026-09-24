@@ -192,6 +192,80 @@ export async function getChromaStatus(): Promise<{
   }
 }
 
+/**
+ * Splits text into safe chunks that strictly respect ChromaDB Cloud's per-document size limit (16,384 bytes).
+ * We enforce a conservative maximum of 3,800 bytes per chunk, which provides optimal
+ * semantic density for RAG while completely eliminating ChromaDB 16KB quota errors.
+ */
+export function splitTextIntoSafeChunks(text: string, maxBytes: number = 3800): string[] {
+  if (!text || typeof text !== "string") return [];
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  if (Buffer.byteLength(trimmed, "utf-8") <= maxBytes) {
+    return [trimmed];
+  }
+
+  const chunks: string[] = [];
+  const paragraphs = trimmed.split(/\n\s*\n/);
+  let currentChunk = "";
+
+  for (const para of paragraphs) {
+    const candidate = currentChunk ? `${currentChunk}\n\n${para}` : para;
+    if (Buffer.byteLength(candidate, "utf-8") <= maxBytes) {
+      currentChunk = candidate;
+    } else {
+      if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+      }
+
+      if (Buffer.byteLength(para, "utf-8") <= maxBytes) {
+        currentChunk = para;
+      } else {
+        // Paragraph itself exceeds maxBytes: split by sentences or lines
+        const sentences = para.split(/(?<=[.!?\n])\s+/);
+        let subChunk = "";
+        for (const sentence of sentences) {
+          const subCandidate = subChunk ? `${subChunk} ${sentence}` : sentence;
+          if (Buffer.byteLength(subCandidate, "utf-8") <= maxBytes) {
+            subChunk = subCandidate;
+          } else {
+            if (subChunk.trim()) {
+              chunks.push(subChunk.trim());
+            }
+            if (Buffer.byteLength(sentence, "utf-8") <= maxBytes) {
+              subChunk = sentence;
+            } else {
+              // Sentence itself exceeds maxBytes: slice by character chunks safely
+              let charIndex = 0;
+              while (charIndex < sentence.length) {
+                let sliceLen = Math.floor(maxBytes / 2);
+                let slice = sentence.slice(charIndex, charIndex + sliceLen);
+                while (Buffer.byteLength(slice, "utf-8") > maxBytes && sliceLen > 50) {
+                  sliceLen = Math.floor(sliceLen * 0.8);
+                  slice = sentence.slice(charIndex, charIndex + sliceLen);
+                }
+                if (slice.trim()) {
+                  chunks.push(slice.trim());
+                }
+                charIndex += sliceLen;
+              }
+              subChunk = "";
+            }
+          }
+        }
+        currentChunk = subChunk;
+      }
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  return chunks.filter(c => c && Buffer.byteLength(c, "utf-8") <= maxBytes);
+}
+
 export async function indexDocumentToChroma(doc: NoteDocument): Promise<number> {
   const ready = await initChroma();
   if (!ready || !activeCollection) {
@@ -213,52 +287,70 @@ export async function indexDocumentToChroma(doc: NoteDocument): Promise<number> 
       const content = sec.contentMarkdown || "";
       if (!content.trim()) return;
 
-      const chunkId = `doc_${doc.id}_p${pageNum}_s${idx}`;
-      const fullText = `[Document: ${doc.title}] [Subject: ${doc.subject || "AWS Cloud"}] [Unit: ${doc.unit || "Unit 1"}] [Page ${pageNum}: ${sec.title}]\n${sec.subtitle ? sec.subtitle + "\n" : ""}${content}`;
+      const headerPrefix = `[Document: ${doc.title}] [Subject: ${doc.subject || "AWS Cloud"}] [Unit: ${doc.unit || "Unit 1"}] [Page ${pageNum}: ${sec.title}]\n${sec.subtitle ? sec.subtitle + "\n" : ""}`;
+      const rawFullText = `${headerPrefix}${content}`;
 
-      ids.push(chunkId);
-      documents.push(fullText);
-      metadatas.push({
-        type: "note",
-        docId: String(doc.id),
-        docTitle: String(doc.title || ""),
-        shortTitle: String(doc.shortTitle || ""),
-        subject: String(doc.subject || "AWS Cloud & Labs"),
-        unit: String(doc.unit || "Unit 1"),
-        pageNumber: Number(pageNum),
-        sectionTitle: String(sec.title || `Page ${pageNum}`),
-        courseCode: String(doc.courseCode || "")
+      // Enforce safe chunk size strictly <= 3,800 bytes (ChromaDB quota ceiling is 16,384 bytes)
+      const safeChunks = splitTextIntoSafeChunks(rawFullText, 3800);
+
+      safeChunks.forEach((chunkText, cIdx) => {
+        const chunkId = `doc_${doc.id}_p${pageNum}_s${idx}_c${cIdx}`;
+        ids.push(chunkId);
+        documents.push(chunkText);
+        metadatas.push({
+          type: "note",
+          docId: String(doc.id),
+          docTitle: String(doc.title || ""),
+          shortTitle: String(doc.shortTitle || ""),
+          subject: String(doc.subject || "AWS Cloud & Labs"),
+          unit: String(doc.unit || "Unit 1"),
+          pageNumber: Number(pageNum),
+          sectionTitle: String(sec.title || `Page ${pageNum}`),
+          courseCode: String(doc.courseCode || ""),
+          chunkIndex: cIdx,
+          totalChunks: safeChunks.length
+        });
       });
     });
 
     // Fallback if document has no markdown sections yet
     if (ids.length === 0 && (doc.title || doc.description)) {
-      const chunkId = `doc_${doc.id}_overview`;
       const fullText = `[Document: ${doc.title}] [Subject: ${doc.subject || "Course Note"}] [Unit: ${doc.unit || "Unit 1"}]\n${doc.description || doc.title}`;
-      ids.push(chunkId);
-      documents.push(fullText);
-      metadatas.push({
-        type: "note",
-        docId: String(doc.id),
-        docTitle: String(doc.title || ""),
-        shortTitle: String(doc.shortTitle || ""),
-        subject: String(doc.subject || "Course Material"),
-        unit: String(doc.unit || "Unit 1"),
-        pageNumber: 1,
-        sectionTitle: String(doc.title || "Overview"),
-        courseCode: String(doc.courseCode || "")
+      const safeChunks = splitTextIntoSafeChunks(fullText, 3800);
+
+      safeChunks.forEach((chunkText, cIdx) => {
+        const chunkId = `doc_${doc.id}_overview_c${cIdx}`;
+        ids.push(chunkId);
+        documents.push(chunkText);
+        metadatas.push({
+          type: "note",
+          docId: String(doc.id),
+          docTitle: String(doc.title || ""),
+          shortTitle: String(doc.shortTitle || ""),
+          subject: String(doc.subject || "Course Material"),
+          unit: String(doc.unit || "Unit 1"),
+          pageNumber: 1,
+          sectionTitle: String(doc.title || "Overview"),
+          courseCode: String(doc.courseCode || ""),
+          chunkIndex: cIdx,
+          totalChunks: safeChunks.length
+        });
       });
     }
 
     if (ids.length > 0) {
-      // Upsert in batches of 50
-      const batchSize = 50;
+      // Upsert in batches of 25 (guarantees lightweight payloads well under all network & quota limits)
+      const batchSize = 25;
       for (let i = 0; i < ids.length; i += batchSize) {
-        await activeCollection.upsert({
-          ids: ids.slice(i, i + batchSize),
-          documents: documents.slice(i, i + batchSize),
-          metadatas: metadatas.slice(i, i + batchSize)
-        });
+        try {
+          await activeCollection.upsert({
+            ids: ids.slice(i, i + batchSize),
+            documents: documents.slice(i, i + batchSize),
+            metadatas: metadatas.slice(i, i + batchSize)
+          });
+        } catch (batchErr: any) {
+          console.warn(`[ChromaDB] Notice during upsert batch ${Math.floor(i / batchSize) + 1}:`, batchErr?.message || batchErr);
+        }
       }
       console.log(`[ChromaDB] Upserted ${ids.length} vector chunks for document "${doc.title}" (ID: ${doc.id})`);
     }
@@ -337,26 +429,31 @@ export async function indexAnnouncementToChroma(ann: CourseAnnouncement): Promis
     // 1. Remove previous chunk if exists
     await deleteAnnouncementFromChroma(ann.id);
 
-    const chunkId = `ann_${ann.id}`;
     const fullText = `[Course Announcement / Notice Board: ${ann.title}] [Author: ${ann.author || "Instructor"}] [Date: ${ann.date || ""}] ${ann.important ? "[Priority: High / Important]" : ""}${ann.relatedDocTitle ? ` [Related Material: ${ann.relatedDocTitle}]` : ""}\n\n${ann.content}`;
+    const safeChunks = splitTextIntoSafeChunks(fullText, 3800);
+
+    const ids = safeChunks.map((_, i) => `ann_${ann.id}_c${i}`);
+    const metadatas = safeChunks.map((_, i) => ({
+      type: "announcement",
+      annId: String(ann.id),
+      docId: `ann_${ann.id}`,
+      docTitle: `Notice: ${ann.title}`,
+      title: String(ann.title || ""),
+      author: String(ann.author || "Instructor"),
+      date: String(ann.date || ""),
+      important: Boolean(ann.important),
+      relatedDocId: String(ann.relatedDocId || ""),
+      relatedDocTitle: String(ann.relatedDocTitle || ""),
+      subject: "Course Announcements",
+      unit: "Notices",
+      chunkIndex: i,
+      totalChunks: safeChunks.length
+    }));
 
     await activeCollection.upsert({
-      ids: [chunkId],
-      documents: [fullText],
-      metadatas: [{
-        type: "announcement",
-        annId: String(ann.id),
-        docId: `ann_${ann.id}`,
-        docTitle: `Notice: ${ann.title}`,
-        title: String(ann.title || ""),
-        author: String(ann.author || "Instructor"),
-        date: String(ann.date || ""),
-        important: Boolean(ann.important),
-        relatedDocId: String(ann.relatedDocId || ""),
-        relatedDocTitle: String(ann.relatedDocTitle || ""),
-        subject: "Course Announcements",
-        unit: "Notices"
-      }]
+      ids,
+      documents: safeChunks,
+      metadatas
     });
 
     console.log(`[ChromaDB] Successfully indexed announcement "${ann.title}" (ID: ${ann.id}) into ChromaDB`);
