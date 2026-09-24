@@ -107,3 +107,23 @@ Your uploaded notes and materials will **never disappear upon page refresh or re
 4. **Permanent Cloud Storage (Render Disks - Optional)**:
    - On Render Starter plan ($7/mo), you can attach a persistent Render Disk to `course-teacher-portal` (e.g. Mount Path: `/opt/render/project/src/data`, Size: 1 GB) so server files persist permanently even across code redeployments.
 
+---
+
+## PowerPoint (.pptx) High-Fidelity Presentation Rendering on Render
+
+Render runs a minimal container that doesn't have LibreOffice installed by default in the Node runtime. We provide two ways to display PowerPoint presentations:
+
+### Option 1: Built-in Live Presentation Viewer (Works Immediately, Zero Configuration)
+Because your Render app runs on a public domain (`course-teacher-portal.onrender.com`), you can use the built-in presentation embed:
+- In the presentation viewer, click **"Office Live"** or **"Google Viewer"** in the top bar.
+- Microsoft PowerPoint / Google Slides will render the exact original file directly inside your browser with 100% fidelity to the original design, cards, colors, fonts, and diagrams.
+- You can also click **"Open Fullscreen Tab"** to view it in full screen.
+
+### Option 2: Deploy with Docker on Render (Enables Server-Side Slide Image Generation)
+To have Render automatically convert uploaded PowerPoint slides into high-resolution 1080p images:
+1. In your **Render Dashboard**, open your `course-teacher-portal` service.
+2. Go to **Settings** → **Environment / Runtime**.
+3. Change the **Runtime** from `Node` to `Docker` (or create a new Web Service and select Docker).
+4. Render will automatically build the included `Dockerfile`, which installs `libreoffice-impress`, `poppler-utils` (`pdftoppm`), and `librsvg2-bin`.
+5. Every PowerPoint file uploaded will then be rendered as high-resolution slide images.
+
