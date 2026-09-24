@@ -467,17 +467,77 @@ async function startServer() {
 
   const pdfBuffers = new Map<string, Buffer>();
 
-  // Route to stream original PDF binary buffer (with fallback to disk and remote Teacher service)
+  // Route to stream original PDF binary buffer (with fallback to disk, on-demand PPTX conversion, and remote Teacher service)
   app.get("/api/pdf/:id", async (req, res) => {
     let buf = pdfBuffers.get(req.params.id);
     if (!buf) {
-      // Check if PDF exists on persistent disk
+      // Check if PDF exists in PDF_DIR
       const onDiskPath = path.join(PDF_DIR, `${req.params.id}.pdf`);
       if (fs.existsSync(onDiskPath)) {
         try {
           buf = fs.readFileSync(onDiskPath);
           pdfBuffers.set(req.params.id, buf);
         } catch {}
+      }
+    }
+    if (!buf) {
+      // Check if PDF exists in RAW_FILES_DIR
+      const rawPdfPath = path.join(RAW_FILES_DIR, `${req.params.id}.pdf`);
+      if (fs.existsSync(rawPdfPath)) {
+        try {
+          buf = fs.readFileSync(rawPdfPath);
+          pdfBuffers.set(req.params.id, buf);
+        } catch {}
+      }
+    }
+    if (!buf) {
+      // Check if there is an uploaded PPTX or PPT file that can be converted to PDF on the fly
+      if (fs.existsSync(RAW_FILES_DIR)) {
+        try {
+          const pptxFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${req.params.id}.`) && /\.(pptx|ppt)$/i.test(f));
+          if (pptxFile) {
+            const rawPptxPath = path.join(RAW_FILES_DIR, pptxFile);
+            await renderPptxToSlideImages(req.params.id, rawPptxPath);
+            buf = pdfBuffers.get(req.params.id);
+            if (!buf) {
+              const checkPdf = path.join(PDF_DIR, `${req.params.id}.pdf`);
+              if (fs.existsSync(checkPdf)) buf = fs.readFileSync(checkPdf);
+            }
+          }
+        } catch (e: any) {
+          console.warn("[PDF on-demand conversion notice]:", e?.message);
+        }
+      }
+    }
+    if (!buf) {
+      // Check if slide images exist for docId and synthesize high-res PDF
+      const slideDir = path.join(SLIDES_DIR, req.params.id);
+      if (fs.existsSync(slideDir)) {
+        try {
+          const slideFiles = fs.readdirSync(slideDir)
+            .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
+            .sort((a, b) => {
+              const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+              const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+              return numA - numB;
+            });
+          if (slideFiles.length > 0) {
+            const { PDFDocument } = await import("pdf-lib");
+            const pdfDoc = await PDFDocument.create();
+            for (const sf of slideFiles) {
+              const imgBytes = fs.readFileSync(path.join(slideDir, sf));
+              const img = sf.toLowerCase().endsWith(".png") ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+              const page = pdfDoc.addPage([img.width, img.height]);
+              page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+            }
+            const pdfBytes = await pdfDoc.save();
+            buf = Buffer.from(pdfBytes);
+            pdfBuffers.set(req.params.id, buf);
+            fs.writeFileSync(path.join(PDF_DIR, `${req.params.id}.pdf`), buf);
+          }
+        } catch (e: any) {
+          console.warn("[Slide images to PDF compilation notice]:", e?.message);
+        }
       }
     }
     if (!buf) {
@@ -660,6 +720,10 @@ async function startServer() {
         const cachedPdfPath = path.join(RAW_FILES_DIR, `${docId}.pdf`);
         if (!fs.existsSync(cachedPdfPath)) {
           fs.writeFileSync(cachedPdfPath, pdfBuf);
+        }
+        const pdfDirPath = path.join(PDF_DIR, `${docId}.pdf`);
+        if (!fs.existsSync(pdfDirPath)) {
+          fs.writeFileSync(pdfDirPath, pdfBuf);
         }
       } catch (cacheErr) {
         console.warn(`[PPTX-RENDER] Could not cache PDF:`, cacheErr);
@@ -1086,7 +1150,7 @@ Output ONLY valid JSON in this format:
         pageCount: sections.length,
         sections: sections,
         fileFormat,
-        pdfUrl: ((isPdf && realIsPdf) || pdfBuffers.has(docId)) ? `/api/pdf/${docId}` : undefined,
+        pdfUrl: `/api/pdf/${docId}`,
         pdfDataUrl: (isPdf && realIsPdf) && typeof fileContent === "string" && fileContent.startsWith("data:") ? fileContent : undefined,
         slideImages: slideImageUrls.length > 0 ? slideImageUrls : undefined,
         downloadUrl: `/api/download/${docId}`,

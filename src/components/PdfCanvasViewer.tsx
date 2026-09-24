@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import { 
-  ZoomIn, ZoomOut, Maximize2, Download, ChevronLeft, ChevronRight, 
-  Layers, RefreshCw, FileText, AlertCircle, ExternalLink, Plus, Minus
+  ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
+  Layers, RefreshCw, AlertCircle, ExternalLink, Bookmark
 } from "lucide-react";
+import { NoteSection } from "../types";
+import { PaperMarkdownRenderer } from "./PaperMarkdownRenderer";
 
 // Initialize PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || "4.10.38"}/pdf.worker.mjs`;
@@ -14,6 +16,9 @@ interface Props {
   currentPage?: number;
   onPageChange?: (page: number) => void;
   documentTitle?: string;
+  fallbackSections?: NoteSection[];
+  fallbackSlideImages?: string[];
+  shortTitle?: string;
 }
 
 export const PdfCanvasViewer: React.FC<Props> = ({
@@ -21,19 +26,25 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   pdfDataUrl,
   currentPage = 1,
   onPageChange,
-  documentTitle = "Document"
+  documentTitle = "Document",
+  fallbackSections,
+  fallbackSlideImages,
+  shortTitle
 }) => {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
-  const [numPages, setNumPages] = useState<number>(0);
+  const [numPages, setNumPages] = useState<number>(fallbackSections?.length || 1);
   const [activePage, setActivePage] = useState<number>(currentPage);
-  const [scale, setScale] = useState<number>(1.25);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [scale, setScale] = useState<number>(1.0);
+  const [isLoading, setIsLoading] = useState<boolean>(Boolean(pdfUrl || pdfDataUrl));
   const [error, setError] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"single" | "continuous">("continuous");
 
   const singleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef<{ [key: number]: HTMLCanvasElement | null }>({});
+  const renderTasksRef = useRef<Map<number | string, any>>(new Map());
+  const isProgrammaticScrollRef = useRef<boolean>(false);
+  const lastWheelTimeRef = useRef<number>(0);
 
   const sourceUrl = pdfUrl || pdfDataUrl;
 
@@ -44,9 +55,14 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     }
   }, [currentPage]);
 
-  // Scroll active page into view smoothly
+  // Scroll active page into view smoothly when changed externally or via page controls
   useEffect(() => {
     if (!activePage || isLoading) return;
+
+    if (isProgrammaticScrollRef.current) {
+      // Already scrolling or handled by scroll listener
+      return;
+    }
 
     if (renderMode === "single") {
       if (containerRef.current) {
@@ -54,12 +70,12 @@ export const PdfCanvasViewer: React.FC<Props> = ({
       }
     } else {
       const pageEl = window.document.getElementById(`doc-page-${activePage}`);
-      if (pageEl) {
+      if (pageEl && containerRef.current) {
+        isProgrammaticScrollRef.current = true;
         pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
-        pageEl.classList.add("ring-4", "ring-amber-500", "ring-offset-4", "transition-all", "duration-300");
         const timer = setTimeout(() => {
-          pageEl.classList.remove("ring-4", "ring-amber-500", "ring-offset-4");
-        }, 2200);
+          isProgrammaticScrollRef.current = false;
+        }, 800);
         return () => clearTimeout(timer);
       }
     }
@@ -68,8 +84,14 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   // Load PDF Document
   useEffect(() => {
     if (!sourceUrl) {
-      setIsLoading(false);
-      setError("No PDF binary source available.");
+      if (fallbackSections && fallbackSections.length > 0) {
+        setNumPages(fallbackSections.length);
+        setIsLoading(false);
+        setError(null);
+      } else {
+        setIsLoading(false);
+        setError("No document binary source available.");
+      }
       return;
     }
 
@@ -92,7 +114,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
       })
       .catch((err) => {
         if (!isMounted) return;
-        console.warn("PDF.js load error:", err);
+        console.warn("PDF.js load notice:", err);
         // Fallback: try fetching as ArrayBuffer if dataUrl or relative URL
         if (pdfDataUrl) {
           fetch(pdfDataUrl)
@@ -106,11 +128,22 @@ export const PdfCanvasViewer: React.FC<Props> = ({
               setNumPages(doc.numPages);
               setIsLoading(false);
             })
-            .catch(e => {
+            .catch(() => {
               if (!isMounted) return;
-              setIsLoading(false);
-              setError("Failed to load PDF document into viewer.");
+              if (fallbackSections && fallbackSections.length > 0) {
+                setNumPages(fallbackSections.length);
+                setIsLoading(false);
+                setError(null);
+              } else {
+                setIsLoading(false);
+                setError("Failed to load PDF document.");
+              }
             });
+        } else if (fallbackSections && fallbackSections.length > 0) {
+          // Gracefully fall back to rendering slide cards/images
+          setNumPages(fallbackSections.length);
+          setIsLoading(false);
+          setError(null);
         } else {
           setIsLoading(false);
           setError("Failed to render PDF document.");
@@ -120,84 +153,141 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     return () => {
       isMounted = false;
     };
-  }, [sourceUrl]);
+  }, [sourceUrl, fallbackSections]);
+
+  const renderCanvasPage = async (pageNum: number, canvas: HTMLCanvasElement, targetScale: number, taskIdKey: number | string) => {
+    if (!pdfDoc || !canvas) return;
+    try {
+      const existingTask = renderTasksRef.current.get(taskIdKey);
+      if (existingTask) {
+        existingTask.cancel();
+        renderTasksRef.current.delete(taskIdKey);
+      }
+
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: targetScale });
+      const context = canvas.getContext("2d");
+      if (!context) return;
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const renderTask = page.render({
+        canvasContext: context,
+        viewport: viewport
+      });
+      renderTasksRef.current.set(taskIdKey, renderTask);
+      await renderTask.promise;
+    } catch (err: any) {
+      if (err?.name !== "RenderingCancelledException") {
+        console.warn(`Render notice for page ${pageNum}:`, err?.message);
+      }
+    }
+  };
 
   // Render Single Page Canvas
   useEffect(() => {
     if (!pdfDoc || renderMode !== "single" || !singleCanvasRef.current) return;
-
-    let isCancelled = false;
     const pageNumToRender = Math.min(Math.max(1, activePage), numPages || 1);
-
-    pdfDoc.getPage(pageNumToRender).then((page: any) => {
-      if (isCancelled || !singleCanvasRef.current) return;
-
-      const viewport = page.getViewport({ scale });
-      const canvas = singleCanvasRef.current;
-      const context = canvas.getContext("2d");
-
-      if (!context) return;
-
-      const devicePixelRatio = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * devicePixelRatio);
-      canvas.height = Math.floor(viewport.height * devicePixelRatio);
-      canvas.style.width = `${Math.floor(viewport.width)}px`;
-      canvas.style.height = `${Math.floor(viewport.height)}px`;
-
-      context.scale(devicePixelRatio, devicePixelRatio);
-
-      const renderContext = {
-        canvasContext: context,
-        viewport: viewport
-      };
-
-      page.render(renderContext);
-    });
-
-    return () => {
-      isCancelled = true;
-    };
+    renderCanvasPage(pageNumToRender, singleCanvasRef.current, scale, "single");
   }, [pdfDoc, activePage, scale, renderMode, numPages]);
 
   // Render Continuous Mode Pages
   useEffect(() => {
     if (!pdfDoc || renderMode !== "continuous") return;
-
-    let isCancelled = false;
-
     for (let p = 1; p <= numPages; p++) {
-      const canvas = pageRefs.current[p];
-      if (!canvas) continue;
+      const targetCanvas = pageRefs.current[p];
+      if (targetCanvas) {
+        renderCanvasPage(p, targetCanvas, scale * 0.95, p);
+      }
+    }
+  }, [pdfDoc, scale, renderMode, numPages]);
 
-      const pageNum = p;
-      pdfDoc.getPage(pageNum).then((page: any) => {
-        if (isCancelled) return;
-        const targetCanvas = pageRefs.current[pageNum];
-        if (!targetCanvas) return;
+  // Keyboard Navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || (e.target as HTMLElement)?.isContentEditable) return;
 
-        const viewport = page.getViewport({ scale: scale * 0.95 });
-        const context = targetCanvas.getContext("2d");
-        if (!context) return;
+      if (e.key === "ArrowDown" || e.key === "PageDown" || e.key === "ArrowRight" || (e.key === " " && !e.shiftKey)) {
+        if (renderMode === "single" && activePage < numPages) {
+          e.preventDefault();
+          handlePageChange(activePage + 1);
+        }
+      } else if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "ArrowLeft" || (e.key === " " && e.shiftKey)) {
+        if (renderMode === "single" && activePage > 1) {
+          e.preventDefault();
+          handlePageChange(activePage - 1);
+        }
+      }
+    };
 
-        const devicePixelRatio = window.devicePixelRatio || 1;
-        targetCanvas.width = Math.floor(viewport.width * devicePixelRatio);
-        targetCanvas.height = Math.floor(viewport.height * devicePixelRatio);
-        targetCanvas.style.width = `${Math.floor(viewport.width)}px`;
-        targetCanvas.style.height = `${Math.floor(viewport.height)}px`;
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activePage, numPages, renderMode]);
 
-        context.scale(devicePixelRatio, devicePixelRatio);
+  // Handle Wheel Navigation in Single Page mode
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (renderMode !== "single" || numPages <= 1) return;
+    const el = containerRef.current;
+    if (!el) return;
 
-        page.render({
-          canvasContext: context,
-          viewport: viewport
-        });
-      });
+    const now = Date.now();
+    if (now - lastWheelTimeRef.current < 450) {
+      return;
     }
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [pdfDoc, scale, renderMode, numPages]);
+    const isScrollableY = el.scrollHeight > el.clientHeight + 10;
+    const isAtBottom = !isScrollableY || (el.scrollHeight - el.scrollTop - el.clientHeight <= 15);
+    const isAtTop = !isScrollableY || (el.scrollTop <= 15);
+
+    if (e.deltaY > 30 && isAtBottom) {
+      if (activePage < numPages) {
+        lastWheelTimeRef.current = now;
+        handlePageChange(activePage + 1);
+      }
+    } else if (e.deltaY < -30 && isAtTop) {
+      if (activePage > 1) {
+        lastWheelTimeRef.current = now;
+        handlePageChange(activePage - 1);
+      }
+    }
+  };
+
+  // Track active page while scrolling in continuous mode
+  const handleScroll = () => {
+    if (renderMode !== "continuous" || numPages <= 1 || isProgrammaticScrollRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const containerCenter = containerRect.top + containerRect.height / 3;
+
+    let closestPage = 1;
+    let minDistance = Infinity;
+
+    for (let p = 1; p <= numPages; p++) {
+      const el = document.getElementById(`doc-page-${p}`);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const distance = Math.abs(rect.top - containerCenter);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestPage = p;
+        }
+      }
+    }
+
+    if (closestPage !== activePage) {
+      setActivePage(closestPage);
+      if (onPageChange) onPageChange(closestPage);
+    }
+  };
 
   const handlePageChange = (newPage: number) => {
     const valid = Math.min(Math.max(1, newPage), numPages);
@@ -295,10 +385,14 @@ export const PdfCanvasViewer: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Main Light Canvas Viewer Stage matching user screenshot */}
+      {/* Main Light Canvas Viewer Stage */}
       <div 
         ref={containerRef}
-        className="flex-1 overflow-auto bg-[#e5e7eb] dark:bg-[#1f1f23] p-2 sm:p-6 md:p-8 flex flex-col items-center relative min-h-[400px] sm:min-h-[500px]"
+        onWheel={handleWheel}
+        onScroll={handleScroll}
+        tabIndex={0}
+        className="flex-1 overflow-y-auto overflow-x-auto bg-[#e5e7eb] dark:bg-[#1f1f23] p-3 sm:p-6 md:p-8 flex flex-col items-center relative w-full h-full outline-none focus:outline-none"
+        style={{ scrollBehavior: "smooth" }}
       >
         {isLoading && (
           <div className="my-auto flex flex-col items-center justify-center space-y-3 p-6 sm:p-8 text-center bg-white/80 dark:bg-[#202025]/80 backdrop-blur-md rounded-2xl shadow-xl border border-slate-300 dark:border-slate-700 max-w-sm">
@@ -329,27 +423,108 @@ export const PdfCanvasViewer: React.FC<Props> = ({
         )}
 
         {!isLoading && !error && renderMode === "single" && (
-          <div className="my-auto flex flex-col items-center w-full max-w-full overflow-x-auto">
-            <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full">
-              <canvas ref={singleCanvasRef} className="block max-w-full h-auto mx-auto" />
-            </div>
+          <div className="w-full flex-1 min-h-full flex flex-col items-center justify-start py-4 sm:py-6 px-1 sm:px-4 max-w-full">
+            {pdfDoc ? (
+              <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full">
+                <canvas ref={singleCanvasRef} className="block max-w-full h-auto mx-auto" />
+              </div>
+            ) : fallbackSlideImages?.[activePage - 1] ? (
+              <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full p-2">
+                <img
+                  src={fallbackSlideImages[activePage - 1]}
+                  alt={`Slide ${activePage}`}
+                  style={{ transform: `scale(${scale})`, transformOrigin: "top center" }}
+                  className="max-w-full h-auto block mx-auto rounded"
+                />
+              </div>
+            ) : fallbackSections && fallbackSections[activePage - 1] ? (
+              <div 
+                className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full p-2 sm:p-4"
+                style={{ transform: `scale(${scale})`, transformOrigin: "top center" }}
+              >
+                <div className="w-full sm:w-[840px] max-w-full min-h-[460px] sm:min-h-[540px] bg-[#1a2332] text-white rounded-xl p-6 sm:p-10 relative overflow-hidden font-sans flex flex-col justify-between shadow-2xl">
+                  <div className="absolute -top-16 -right-16 w-72 h-72 rounded-full bg-[#222f42] opacity-60 pointer-events-none blur-md" />
+                  <div className="absolute -bottom-20 -right-20 w-80 h-80 rounded-full bg-[#1e2a3c] opacity-80 pointer-events-none" />
+                  <div className="relative z-10">
+                    <div className="w-10 h-10 rounded-xl bg-[#232f42] border border-[#34445d] flex items-center justify-center mb-4 sm:mb-6 shadow-md">
+                      <Layers className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <div className="text-amber-400 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2">
+                      {fallbackSections[activePage - 1]?.subtitle || shortTitle || "PRESENTATION DECK"}
+                    </div>
+                    <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+                      {fallbackSections[activePage - 1]?.title || `Slide ${activePage}`}
+                    </h1>
+                    <div className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-6 font-normal">
+                      <PaperMarkdownRenderer content={fallbackSections[activePage - 1]?.contentMarkdown || ""} isDark={true} />
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-[#2d3a50] flex items-center justify-between text-xs text-slate-400 font-mono relative z-10">
+                    <span className="truncate pr-2">{documentTitle || `Slide ${activePage}`}</span>
+                    <span>{activePage} / {numPages}</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 
         {!isLoading && !error && renderMode === "continuous" && (
-          <div className="w-full flex flex-col items-center space-y-6 sm:space-y-8 my-2 pb-16 max-w-full overflow-x-auto">
-            {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-              <div key={pageNum} id={`doc-page-${pageNum}`} className="flex flex-col items-center scroll-mt-6 max-w-full">
-                <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 max-w-full">
-                  <canvas
-                    ref={(el) => {
-                      pageRefs.current[pageNum] = el;
-                    }}
-                    className="block max-w-full h-auto mx-auto"
-                  />
+          <div className="w-full flex flex-col items-center space-y-6 sm:space-y-10 my-2 pb-24 max-w-full">
+            {pdfDoc ? (
+              Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                <div key={pageNum} id={`doc-page-${pageNum}`} className="flex flex-col items-center scroll-mt-4 max-w-full">
+                  <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 max-w-full">
+                    <canvas
+                      ref={(el) => {
+                        pageRefs.current[pageNum] = el;
+                        if (el && pdfDoc) {
+                          renderCanvasPage(pageNum, el, scale * 0.95, pageNum);
+                        }
+                      }}
+                      className="block max-w-full h-auto mx-auto"
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            ) : fallbackSections && fallbackSections.length > 0 ? (
+              fallbackSections.map((sec, idx) => {
+                const pageNum = idx + 1;
+                const slideImg = fallbackSlideImages?.[idx];
+                return (
+                  <div key={pageNum} id={`doc-page-${pageNum}`} className="flex flex-col items-center scroll-mt-6 max-w-full">
+                    {slideImg ? (
+                      <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 p-2 max-w-full">
+                        <img src={slideImg} alt={`Slide ${pageNum}`} className="max-w-full h-auto block mx-auto rounded" />
+                      </div>
+                    ) : (
+                      <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 p-4 max-w-full">
+                        <div className="w-full sm:w-[840px] max-w-full min-h-[460px] sm:min-h-[540px] bg-[#1a2332] text-white rounded-xl p-6 sm:p-10 relative overflow-hidden font-sans flex flex-col justify-between shadow-2xl">
+                          <div className="relative z-10">
+                            <div className="w-10 h-10 rounded-xl bg-[#232f42] border border-[#34445d] flex items-center justify-center mb-4 shadow-md">
+                              <Layers className="w-5 h-5 text-amber-400" />
+                            </div>
+                            <div className="text-amber-400 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2">
+                              {sec.subtitle || `SLIDE ${pageNum} OF ${numPages}`}
+                            </div>
+                            <h2 className="font-serif text-2xl sm:text-3xl font-extrabold text-white mb-4">
+                              {sec.title || `Slide ${pageNum}`}
+                            </h2>
+                            <div className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-6">
+                              <PaperMarkdownRenderer content={sec.contentMarkdown || ""} isDark={true} />
+                            </div>
+                          </div>
+                          <div className="pt-3 border-t border-[#2d3a50] flex items-center justify-between text-xs text-slate-400 font-mono">
+                            <span className="truncate pr-2">{documentTitle}</span>
+                            <span>{pageNum} / {numPages}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : null}
           </div>
         )}
 
