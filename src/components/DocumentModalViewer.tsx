@@ -430,15 +430,22 @@ export const DocumentModalViewer: React.FC<Props> = ({
     activeDoc?.fileFormat === "ppt" || 
     activeDoc?.title?.toLowerCase().endsWith(".pptx") || 
     activeDoc?.title?.toLowerCase().endsWith(".ppt") || 
-    (activeDoc?.sections?.[0]?.subtitle && activeDoc.sections[0].subtitle.toLowerCase().includes("powerpoint"))
+    activeDoc?.originalFileName?.toLowerCase().endsWith(".pptx") || 
+    activeDoc?.originalFileName?.toLowerCase().endsWith(".ppt") || 
+    activeDoc?.downloadUrl?.toLowerCase().includes(".pptx") ||
+    activeDoc?.downloadUrl?.toLowerCase().includes(".ppt") ||
+    (activeDoc?.description && activeDoc.description.toLowerCase().includes("powerpoint")) ||
+    (activeDoc?.sections?.[0]?.subtitle && activeDoc.sections[0].subtitle.toLowerCase().includes("powerpoint")) ||
+    (activeDoc?.tags && activeDoc.tags.some(t => t.toLowerCase().includes("powerpoint") || t.toLowerCase() === "ppt" || t.toLowerCase() === "pptx")) ||
+    (activeDoc?.slideImages && activeDoc.slideImages.length > 0)
   );
 
   const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
-  const [pptViewerMode, setPptViewerMode] = useState<"slides" | "office" | "google">("google");
+  const [pptViewerMode, setPptViewerMode] = useState<"slides" | "office" | "google">("office");
 
   const absolutePptUrl = useMemo(() => {
     if (typeof window === "undefined" || !activeDoc) return "";
-    const rawPath = activeDoc.downloadUrl || activeDoc.originalFileUrl || `/api/download/${activeDoc.id}`;
+    const rawPath = activeDoc.originalFileUrl || activeDoc.downloadUrl || `/api/file/${activeDoc.id}`;
     if (rawPath.startsWith("http")) return rawPath;
     return `${window.location.origin}${rawPath}`;
   }, [activeDoc]);
@@ -452,12 +459,12 @@ export const DocumentModalViewer: React.FC<Props> = ({
   }, [absolutePptUrl, currentPage]);
 
   useEffect(() => {
-    if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) {
+    if (!isPptxDoc && (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl)) {
       setViewMode("pdf");
     } else {
       setViewMode("notes");
     }
-  }, [activeView, activeDoc?.pdfUrl, activeDoc?.pdfDataUrl]);
+  }, [activeView, isPptxDoc, activeDoc?.pdfUrl, activeDoc?.pdfDataUrl]);
 
   const handleCopyCode = (codeText: string, key: string) => {
     navigator.clipboard.writeText(codeText);
@@ -949,7 +956,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
             <div className="w-full max-w-3xl my-6">
               {/* Quiz view handled inside main container */}
             </div>
-          ) : viewMode === "pdf" && (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) ? (
+          ) : !isPptxDoc && viewMode === "pdf" && (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) ? (
             /* High-Fidelity PDF Canvas Viewer — All Figures & Diagrams Intact */
             <div className="w-full h-full flex flex-col items-center justify-center p-1 sm:p-2">
               <div className="w-full max-w-6xl h-[calc(100vh-5.5rem)]">
@@ -962,7 +969,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                 />
               </div>
             </div>
-          ) : viewMode === "split" && (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) ? (
+          ) : !isPptxDoc && viewMode === "split" && (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) ? (
             /* Split View: Side-by-side Original PDF Canvas and AI Notes */
             <div className="w-full h-[calc(100vh-5.5rem)] grid grid-cols-1 lg:grid-cols-2 gap-4 p-2 sm:p-4 overflow-hidden">
               <div className="h-full overflow-hidden">
@@ -1024,40 +1031,12 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     </div>
 
                     <div className="flex items-center gap-2.5">
-                      <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-700/70 text-[11px]">
-                        <button
-                          type="button"
-                          onClick={() => setPptViewerMode("google")}
-                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
-                            pptViewerMode === "google" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
-                          }`}
-                          title="Google Slides Viewer"
-                        >
-                          Google
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPptViewerMode("office")}
-                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
-                            pptViewerMode === "office" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
-                          }`}
-                          title="Microsoft Office Live Viewer"
-                        >
-                          Office Live
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPptViewerMode("slides")}
-                          className={`px-2.5 py-1 rounded cursor-pointer transition-all ${
-                            pptViewerMode === "slides" ? "bg-amber-500 text-slate-950 font-bold shadow-xs" : "text-slate-400 hover:text-white"
-                          }`}
-                          title="Switch to Slide Cards View"
-                        >
-                          Cards
-                        </button>
+                      <div className="flex items-center gap-1.5 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30 text-[11px] font-semibold text-amber-300">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                        Office Live
                       </div>
                       <a
-                        href={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
+                        href={officeEmbedUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-medium hover:underline text-xs"
@@ -1069,8 +1048,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     </div>
                   </div>
                   <iframe
-                    key={`${pptViewerMode}-${currentPage}`}
-                    src={pptViewerMode === "office" ? officeEmbedUrl : googleEmbedUrl}
+                    key={`office-${currentPage}`}
+                    src={officeEmbedUrl}
                     className="w-full flex-1 border-0 bg-slate-950"
                     title={`PowerPoint Presentation - Slide ${currentPage}`}
                     allowFullScreen
