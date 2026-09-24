@@ -1,5 +1,18 @@
 import mammoth from "mammoth";
 import AdmZip from "adm-zip";
+import path from "path";
+
+export function unescapeXml(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&")
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
 
 export interface ParsedDocumentResult {
   text: string;
@@ -169,73 +182,110 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
       const pageNum = i + 1; // 1-indexed presentation slide number
       const xmlStr = slideItem.entry.getData().toString("utf-8");
 
-      // Extract slide title
+      // 1. Extract slide relationships (linked media / images)
+      const relsMap: Map<string, string> = new Map();
+      const relsEntryName = `ppt/slides/_rels/slide${slideItem.slideNum}.xml.rels`;
+      const relsEntry = zip.getEntry(relsEntryName);
+      if (relsEntry) {
+        try {
+          const relsXml = relsEntry.getData().toString("utf-8");
+          for (const match of relsXml.matchAll(/<Relationship\s+[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)) {
+            const rId = match[1];
+            let target = match[2];
+            target = target.replace(/^\.\.\//, "ppt/");
+            relsMap.set(rId, target);
+          }
+        } catch {}
+      }
+
+      // 2. Extract embedded images from slide
+      const slideImages: Array<{ dataUrl: string; name: string }> = [];
+      for (const match of xmlStr.matchAll(/<a:blip[^>]*r:embed="([^"]+)"/g)) {
+        const rId = match[1];
+        const targetPath = relsMap.get(rId);
+        if (targetPath) {
+          const imgEntry = zip.getEntry(targetPath);
+          if (imgEntry) {
+            try {
+              const imgBuffer = imgEntry.getData();
+              const ext = path.extname(targetPath).toLowerCase().replace(".", "");
+              const mimeType = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "png" ? "image/png" : ext === "svg" ? "image/svg+xml" : ext === "gif" ? "image/gif" : "image/png";
+              const dataUrl = `data:${mimeType};base64,${imgBuffer.toString("base64")}`;
+              slideImages.push({ dataUrl, name: path.basename(targetPath) });
+            } catch {}
+          }
+        }
+      }
+
+      // 3. Extract slide title and verbatim text content from shapes in order
       let slideTitle = "";
-      const titleShapeMatch = xmlStr.match(/<p:sp>[\s\S]*?<p:ph[^>]*type=\"(?:title|ctrTitle)\"[^>]*>[\s\S]*?<\/p:sp>/i) ||
-                              xmlStr.match(/<p:sp>[\s\S]*?<p:nvSpPr>[\s\S]*?<p:ph[^>]*type=\"(?:title|ctrTitle)\"[\s\S]*?<\/p:sp>/i);
+      let slideSubtitle = "";
 
-      if (titleShapeMatch) {
-        const textMatches = [...titleShapeMatch[0].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map(m => m[1]);
-        slideTitle = textMatches.join("").trim();
+      const spMatches = [...xmlStr.matchAll(/<p:sp>([\s\S]*?)<\/p:sp>/g)];
+      const bodyLines: string[] = [];
+
+      for (const spMatch of spMatches) {
+        const spXml = spMatch[1];
+        const isTitleShape = /<p:ph[^>]*type=\"(?:title|ctrTitle)\"/i.test(spXml) ||
+                             /<p:cNvPr[^>]*name=\"(?:Title|Heading)\d*\"/i.test(spXml);
+        const isSubTitleShape = /<p:ph[^>]*type=\"(?:subTitle)\"/i.test(spXml);
+
+        const pMatches = [...spXml.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)];
+        const shapeLines: string[] = [];
+
+        for (const pMatch of pMatches) {
+          const pXml = pMatch[1];
+          const lvlMatch = pXml.match(/<a:pPr[^>]*lvl="(\d+)"/i);
+          const lvl = lvlMatch ? parseInt(lvlMatch[1], 10) : 0;
+          const indent = "  ".repeat(lvl);
+
+          const rawTexts = [...pXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map(m => m[1]).join("").trim();
+          const cleanText = unescapeXml(rawTexts);
+          if (cleanText) {
+            shapeLines.push(`${indent}${lvl > 0 ? "* " : ""}${cleanText}`);
+          }
+        }
+
+        if (shapeLines.length === 0) continue;
+
+        if (isTitleShape && !slideTitle) {
+          slideTitle = shapeLines.map(l => l.replace(/^\s*\*\s*/, "")).join(" ");
+        } else if (isSubTitleShape && !slideSubtitle) {
+          slideSubtitle = shapeLines.map(l => l.replace(/^\s*\*\s*/, "")).join(" ");
+        } else {
+          bodyLines.push(...shapeLines);
+        }
       }
 
-      // Extract paragraphs & bullets
-      const slideParagraphs: Array<{ text: string; lvl: number; isTitle: boolean }> = [];
-      const pMatches = xmlStr.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g);
-
-      for (const pMatch of pMatches) {
-        const pXml = pMatch[1];
-        const texts = [...pXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map(m => m[1]).join("").trim();
-        if (!texts) continue;
-
-        const lvlMatch = pXml.match(/<a:pPr[^>]*lvl=\"(\d+)\"/);
-        const lvl = lvlMatch ? parseInt(lvlMatch[1], 10) : 0;
-        const isTitle = slideTitle ? texts === slideTitle : false;
-
-        slideParagraphs.push({ text: texts, lvl, isTitle });
-      }
-
-      if (!slideTitle && slideParagraphs.length > 0) {
-        slideTitle = slideParagraphs[0].text;
-        slideParagraphs[0].isTitle = true;
-      }
-
+      // Fallback title detection if not in title placeholder
       if (!slideTitle) {
-        slideTitle = `Slide ${pageNum}`;
+        if (bodyLines.length > 0) {
+          slideTitle = bodyLines.shift()!.replace(/^\s*\*\s*/, "");
+        } else {
+          slideTitle = `Slide ${pageNum}`;
+        }
       }
 
-      // Build slide markdown
-      let slideMarkdown = `## Slide ${pageNum}: ${slideTitle}\n\n`;
-
-      const nonTitleParagraphs = slideParagraphs.filter(p => !p.isTitle);
-      if (nonTitleParagraphs.length > 0) {
-        nonTitleParagraphs.forEach(p => {
-          const indent = "  ".repeat(p.lvl);
-          slideMarkdown += `${indent}* ${p.text}\n`;
-        });
-      } else {
-        slideMarkdown += `*(Visual Slide Content / Title Slide)*\n`;
+      // Build slide markdown preserving the teacher's exact text and adding slide diagrams
+      let slideMarkdown = "";
+      if (bodyLines.length > 0) {
+        slideMarkdown = bodyLines.join("\n\n");
       }
 
-      // Add speaker notes if any
-      const speakerNotes = notesMap.get(slideItem.slideNum);
-      const callouts: Array<{ type: "info" | "definition" | "case-study" | "warning" | "tip"; title: string; content: string }> = [];
+      if (slideImages.length > 0) {
+        slideMarkdown += (slideMarkdown ? "\n\n" : "") + slideImages.map(img => `![Slide Diagram](${img.dataUrl})`).join("\n\n");
+      }
 
-      if (speakerNotes) {
-        slideMarkdown += `\n> **Speaker Notes:**\n> ${speakerNotes}\n`;
-        callouts.push({
-          type: "tip",
-          title: `Slide ${pageNum} Presenter Notes`,
-          content: speakerNotes
-        });
+      if (!slideMarkdown.trim()) {
+        slideMarkdown = `*(Slide ${pageNum})*\n`;
       }
 
       pages.push({
         pageNum,
         title: slideTitle,
-        subtitle: `Slide ${pageNum} of ${slideEntries.length} • PowerPoint Deck`,
-        text: slideMarkdown,
-        callouts
+        subtitle: slideSubtitle || `Slide ${pageNum} of ${slideEntries.length} • PowerPoint Deck`,
+        text: slideMarkdown.trim(),
+        callouts: []
       });
 
       fullTextAccumulator += `\n\n--- [Slide ${pageNum}: ${slideTitle}] ---\n${slideMarkdown}`;

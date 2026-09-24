@@ -219,8 +219,65 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [showOutlineDrawer, setShowOutlineDrawer] = useState<boolean>(false);
   const pageContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingPdf, setIsUploadingPdf] = useState<boolean>(false);
   const isProgrammaticScrollRef = useRef<boolean>(false);
   const scrollTimeoutRef = useRef<any>(null);
+
+  const handleAttachPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeDoc) return;
+    setIsUploadingPdf(true);
+    try {
+      const fileContent: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch("/api/parse-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileType: "application/pdf",
+          fileContent,
+          title: activeDoc.title,
+          subject: activeDoc.subject,
+          unit: activeDoc.unit,
+          unitNumber: activeDoc.unitNumber,
+          unitTitle: activeDoc.unitTitle,
+          courseCode: activeDoc.courseCode,
+          uploadedBy: activeDoc.uploadedBy
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const newDoc: NoteDocument = data.document;
+        if (newDoc) {
+          activeDoc.pdfUrl = newDoc.pdfUrl;
+          activeDoc.pdfDataUrl = newDoc.pdfDataUrl;
+          activeDoc.fileFormat = "pdf";
+          if (onUploadDocument) {
+            onUploadDocument(file);
+          }
+          if (onSelectDocument) {
+            onSelectDocument(newDoc.id);
+          }
+          setViewMode("pdf");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to upload PDF:", err);
+    } finally {
+      setIsUploadingPdf(false);
+      if (pdfFileInputRef.current) {
+        pdfFileInputRef.current.value = "";
+      }
+    }
+  };
 
   // Helper to expand any document into its full list of pages matching doc.pageCount
   const generateFullSectionsForDoc = (doc: NoteDocument): NoteSection[] => {
@@ -367,6 +424,16 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const activeDoc = isAllFilesView
     ? allFilesDoc
     : (singleDoc || notes[0] || allFilesDoc);
+
+  const isPptxDoc = Boolean(
+    activeDoc?.fileFormat === "pptx" || 
+    activeDoc?.fileFormat === "ppt" || 
+    activeDoc?.title?.toLowerCase().endsWith(".pptx") || 
+    activeDoc?.title?.toLowerCase().endsWith(".ppt") || 
+    (activeDoc?.sections?.[0]?.subtitle && activeDoc.sections[0].subtitle.toLowerCase().includes("powerpoint"))
+  );
+
+  const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
     if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) {
@@ -704,6 +771,18 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
         {/* Right Tools: Ask AI & Close Button */}
         <div className="flex items-center gap-2 shrink-0">
+          {isPptxDoc && (
+            <a
+              href={activeDoc?.downloadUrl || activeDoc?.originalFileUrl || `/api/download/${activeDoc?.id}`}
+              download={activeDoc?.originalFileName || `${activeDoc?.title || "presentation"}.pptx`}
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/40 cursor-pointer"
+              title="Download original untouched PowerPoint presentation (.pptx)"
+            >
+              <Download className="w-3.5 h-3.5 text-orange-400" />
+              <span className="hidden sm:inline">Download PPT</span>
+            </a>
+          )}
+
           <button
             type="button"
             onClick={handleToggleAiPanel}
@@ -889,15 +968,67 @@ export const DocumentModalViewer: React.FC<Props> = ({
             </div>
           ) : (
             <div 
-              className="transition-all duration-150 ease-out my-2 sm:my-4 w-full flex justify-center"
+              className="transition-all duration-150 ease-out my-2 sm:my-4 w-full flex flex-col items-center"
               style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: "top center" }}
             >
+              {/* PowerPoint Presentation Header Banner */}
+              {isPptxDoc && (
+                <div className="w-full sm:w-[840px] max-w-full sm:max-w-[95vw] mb-6 p-4 bg-gradient-to-r from-orange-950/60 via-slate-900/90 to-slate-900/90 border border-orange-500/40 rounded-2xl text-xs text-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-orange-500/20 text-orange-400 shrink-0 font-extrabold text-sm flex items-center justify-center">
+                      PPT
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-orange-200 text-sm">{activeDoc.title}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 font-mono border border-orange-500/30">
+                          PowerPoint Slide Deck
+                        </span>
+                      </div>
+                      <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+                        Original presentation slides shown as uploaded for teacher and students • {activeSections.length} slides
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                    <a
+                      href={activeDoc?.downloadUrl || activeDoc?.originalFileUrl || `/api/download/${activeDoc?.id}`}
+                      download={activeDoc?.originalFileName || `${activeDoc?.title || "presentation"}.pptx`}
+                      className="px-3.5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md cursor-pointer"
+                      title="Download the original PowerPoint presentation file (.pptx)"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Original PPT</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setSlideDeckTheme(prev => prev === "dark" ? "light" : "dark")}
+                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                      title="Switch between Dark Slide Deck and Light Paper styling"
+                    >
+                      {slideDeckTheme === "dark" ? (
+                        <>
+                          <Sun className="w-4 h-4 text-amber-400" />
+                          <span>Light Theme</span>
+                        </>
+                      ) : (
+                        <>
+                          <Moon className="w-4 h-4 text-sky-400" />
+                          <span>Dark Theme</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {isContinuousScroll ? (
                 /* Continuous All Pages Presentation Slide Deck Stack */
                 <div id="doc-page-container" className="flex flex-col items-center gap-8 sm:gap-12 w-full pb-20">
                   {activeSections.map((sec, idx) => {
                     const pageNum = idx + 1;
                     const isBookmarked = bookmarks.some(b => b.sectionId === sec.id);
+                    const visualSlideImg = sec.slideImageUrl || (activeDoc?.slideImages && activeDoc.slideImages[idx]);
                     return (
                       <PresentationSlideCard
                         key={sec.id}
@@ -907,6 +1038,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
                         docTitle={activeDoc ? activeDoc.title : "Study Notes"}
                         shortTitle={activeDoc ? (activeDoc.shortTitle || activeDoc.title) : "Slide Deck"}
                         isBookmarked={isBookmarked}
+                        isDarkMode={slideDeckTheme === "dark"}
+                        slideImageUrl={visualSlideImg}
                         onToggleBookmark={() => {
                           if (onToggleBookmark) {
                             onToggleBookmark(sec, sec.title);
@@ -930,6 +1063,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     docTitle={activeDoc ? activeDoc.title : "Study Notes"}
                     shortTitle={activeDoc ? (activeDoc.shortTitle || activeDoc.title) : "Slide Deck"}
                     isBookmarked={bookmarks.some(b => b.sectionId === currentSection.id)}
+                    isDarkMode={slideDeckTheme === "dark"}
+                    slideImageUrl={currentSection.slideImageUrl || (activeDoc?.slideImages && activeDoc.slideImages[currentPage - 1])}
                     onToggleBookmark={() => {
                       if (onToggleBookmark) {
                         onToggleBookmark(currentSection, currentSection.title);
@@ -1059,6 +1194,29 @@ export const DocumentModalViewer: React.FC<Props> = ({
         currentPage={currentPage}
         onSelectPage={(p) => setCurrentPage(p)}
       />
+
+      {/* Hidden File Inputs for Opening / Adding Document & Attaching Original PDF */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".pdf,.pptx,.ppt,.docx,.doc,.txt,.md"
+        className="hidden"
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          if (onUploadDocument) {
+            onUploadDocument(file);
+          }
+          e.target.value = "";
+        }}
+      />
+      <input
+        type="file"
+        ref={pdfFileInputRef}
+        accept=".pdf"
+        className="hidden"
+        onChange={handleAttachPdf}
+      />
     </div>
   );
 };
@@ -1074,6 +1232,8 @@ interface PresentationSlideCardProps {
   onToggleBookmark: () => void;
   copiedCodeKey: string | null;
   handleCopyCode: (code: string, key: string) => void;
+  isDarkMode?: boolean;
+  slideImageUrl?: string;
 }
 
 const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
@@ -1085,8 +1245,63 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
   isBookmarked,
   onToggleBookmark,
   copiedCodeKey,
-  handleCopyCode
+  handleCopyCode,
+  isDarkMode = true,
+  slideImageUrl
 }) => {
+  const visualSlideUrl = slideImageUrl || sec.slideImageUrl;
+
+  // Render high-resolution exact visual presentation slide matching the original PowerPoint file
+  if (visualSlideUrl) {
+    return (
+      <div
+        id={`doc-page-${pageNum}`}
+        className="w-full sm:w-[980px] max-w-full sm:max-w-[95vw] bg-[#0c121e] text-white shadow-2xl border border-slate-700/80 rounded-2xl overflow-hidden relative font-sans transition-all scroll-mt-6 mb-6 flex flex-col group"
+      >
+        {/* Top Header Row with Slide Details */}
+        <div className="bg-[#151e2e] border-b border-slate-700/80 px-4 sm:px-6 py-2.5 flex items-center justify-between text-xs text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-amber-400 bg-amber-400/10 px-2.5 py-0.5 rounded border border-amber-400/25">
+              Slide {pageNum}
+            </span>
+            <span className="text-slate-500">/</span>
+            <span className="text-slate-400 font-medium">{totalPages}</span>
+            <span className="text-slate-600 hidden sm:inline">•</span>
+            <span className="text-slate-200 font-semibold truncate max-w-[200px] sm:max-w-md hidden sm:inline">
+              {sec.title || docTitle}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onToggleBookmark}
+              className="p-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer"
+              title={isBookmarked ? "Remove bookmark" : "Bookmark this slide"}
+            >
+              <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "text-amber-400 fill-amber-400" : ""}`} />
+              <span className="hidden sm:inline">{isBookmarked ? "Bookmarked" : "Bookmark"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* High-Resolution Slide Image (Exact Visual Copy of Original PowerPoint Slide) */}
+        <div className="w-full aspect-[16/9] relative bg-black flex items-center justify-center overflow-hidden">
+          <img
+            src={visualSlideUrl}
+            alt={`Slide ${pageNum}: ${sec.title || "PowerPoint Slide"}`}
+            className="w-full h-full object-contain select-none"
+            loading={pageNum <= 3 ? "eager" : "lazy"}
+          />
+        </div>
+
+        {/* Bottom Bar */}
+        <div className="px-4 sm:px-6 py-2 border-t border-slate-800 bg-[#0f1724] flex items-center justify-between text-[11px] text-slate-400 font-mono">
+          <span className="truncate pr-2">{docTitle || `Slide ${pageNum}`}</span>
+          <span>Original PPT Slide {pageNum} of {totalPages}</span>
+        </div>
+      </div>
+    );
+  }
+
   const isTitleSlide = pageNum === 1 || sec.pageNumber === 1;
 
   if (isTitleSlide) {
@@ -1118,8 +1333,8 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
           </div>
 
           {/* Category Eyebrow */}
-          <div className="text-amber-500 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2 sm:mb-3">
-            {shortTitle || "DATA CENTER DESIGN CONCEPTS"}
+          <div className="text-amber-400 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2 sm:mb-3">
+            {sec.subtitle || shortTitle || "PRESENTATION DECK"}
           </div>
 
           {/* Title */}
@@ -1127,97 +1342,88 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
             {sec.title}
           </h1>
 
-          {/* Subtitle */}
-          {sec.subtitle && (
-            <p className="text-slate-300 text-sm sm:text-lg md:text-xl font-medium mb-4 sm:mb-6">
-              {sec.subtitle}
-            </p>
-          )}
-
           {/* Description Content */}
           <div className="text-slate-300 text-xs sm:text-sm md:text-base leading-relaxed mb-6 sm:mb-8 max-w-3xl font-normal">
             <PaperMarkdownRenderer content={sec.contentMarkdown} isDark={true} />
-          </div>
-
-          {/* Highlight Cards Container (01 / 02) */}
-          <div className="bg-[#212c3e]/90 border border-[#32435e] rounded-xl p-3.5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 shadow-xl mb-4">
-            {sec.callouts && sec.callouts.length > 0 ? (
-              sec.callouts.map((c, i) => (
-                <div key={i} className="flex flex-col">
-                  <span className="text-amber-400 font-bold text-base sm:text-xl mb-1">0{i + 1}</span>
-                  <span className="text-white font-bold text-xs sm:text-base">{c.title}</span>
-                  <p className="text-slate-300 text-[11px] sm:text-xs mt-1 leading-snug">{c.content}</p>
-                </div>
-              ))
-            ) : (
-              <>
-                <div className="flex flex-col">
-                  <span className="text-amber-400 font-bold text-base sm:text-xl mb-1">01</span>
-                  <span className="text-white font-bold text-xs sm:text-base">Full Virtualization</span>
-                  <p className="text-slate-400 text-[11px] sm:text-xs mt-1">Complete hardware abstraction & binary translation</p>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-amber-400 font-bold text-base sm:text-xl mb-1">02</span>
-                  <span className="text-white font-bold text-xs sm:text-base">Para-Virtualization</span>
-                  <p className="text-slate-400 text-[11px] sm:text-xs mt-1">Modified guest OS kernel hypercalls & API translation</p>
-                </div>
-              </>
-            )}
           </div>
         </div>
 
         {/* Footer */}
         <div className="pt-3 sm:pt-4 border-t border-[#2d3a50] flex items-center justify-between text-xs text-slate-400 font-mono relative z-10 mt-4">
-          <span>Overview</span>
-          <span>{pageNum}</span>
+          <span className="truncate pr-2">{docTitle || "Slide 1"}</span>
+          <span>1 / {totalPages}</span>
         </div>
       </div>
     );
   }
 
-  // Light Content Slide
+  // Content Slide (Supports both Dark Slide Deck & Light Document modes)
   return (
     <div
       id={`doc-page-${pageNum}`}
-      className="w-full sm:w-[840px] max-w-full sm:max-w-[95vw] min-h-[460px] sm:min-h-[640px] bg-[#f8fafc] text-slate-900 shadow-2xl border border-slate-200 rounded-2xl p-4 sm:p-8 md:p-12 relative font-sans leading-relaxed transition-all scroll-mt-6 flex flex-col justify-between"
+      className={`w-full sm:w-[840px] max-w-full sm:max-w-[95vw] min-h-[460px] sm:min-h-[640px] ${
+        isDarkMode
+          ? "bg-[#0b1329] text-slate-100 border-[#1e293b] shadow-black/80"
+          : "bg-[#f8fafc] text-slate-900 border-slate-200 shadow-slate-300/40"
+      } shadow-2xl border rounded-2xl p-4 sm:p-8 md:p-12 relative font-sans leading-relaxed transition-all scroll-mt-6 flex flex-col justify-between`}
     >
       <div>
         {/* Top Eyebrow & Bookmark */}
         <div className="flex items-center justify-between mb-3">
-          <div className="text-amber-600 font-bold uppercase tracking-widest text-[11px] sm:text-xs">
-            {sec.subtitle || "OVERVIEW"}
+          <div className={`${isDarkMode ? "text-amber-400" : "text-amber-600"} font-bold uppercase tracking-widest text-[11px] sm:text-xs`}>
+            {sec.subtitle || `SLIDE ${pageNum} OF ${totalPages}`}
           </div>
           <button
             onClick={onToggleBookmark}
-            className="p-1.5 sm:p-2 rounded-lg bg-slate-200/80 hover:bg-slate-300 text-slate-600 hover:text-amber-600 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer min-h-[36px]"
+            className={`p-1.5 sm:p-2 rounded-lg ${
+              isDarkMode
+                ? "bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-amber-400"
+                : "bg-slate-200/80 hover:bg-slate-300 text-slate-600 hover:text-amber-600"
+            } transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer min-h-[36px]`}
             title={isBookmarked ? "Remove bookmark" : "Bookmark this page"}
           >
-            <Bookmark className={`w-4 h-4 ${isBookmarked ? "text-amber-500 fill-amber-500" : ""}`} />
+            <Bookmark className={`w-4 h-4 ${isBookmarked ? (isDarkMode ? "text-amber-400 fill-amber-400" : "text-amber-500 fill-amber-500") : ""}`} />
             <span className="hidden sm:inline">{isBookmarked ? "Bookmarked" : "Bookmark"}</span>
           </button>
         </div>
 
         {/* Title */}
-        <h1 className="font-serif text-xl sm:text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight leading-snug mb-3 sm:mb-4">
+        <h1 className={`font-sans text-xl sm:text-3xl md:text-4xl font-extrabold ${isDarkMode ? "text-white" : "text-slate-900"} tracking-tight leading-snug mb-4 sm:mb-6`}>
           {sec.title}
         </h1>
 
         {/* Content Markdown */}
-        <div className="text-slate-800 space-y-4 font-normal text-sm sm:text-base">
-          <PaperMarkdownRenderer content={sec.contentMarkdown} isDark={false} />
+        <div className="space-y-4 font-normal text-sm sm:text-base">
+          <PaperMarkdownRenderer content={sec.contentMarkdown} isDark={isDarkMode} />
         </div>
 
         {/* Callout Boxes */}
-        {sec.callouts && sec.callouts.length > 0 && (
-          <div className="my-6 space-y-3">
-            {sec.callouts.map((call, idx) => (
-              <div key={idx} className="p-4 rounded-xl border border-amber-300/80 bg-amber-50/80 text-slate-900 text-xs sm:text-sm space-y-1 shadow-xs">
-                <div className="font-bold text-amber-900">{call.title}</div>
-                <p className="text-slate-800 leading-relaxed">{call.content}</p>
-              </div>
-            ))}
-          </div>
-        )}
+        {(() => {
+          const validCallouts = (sec.callouts || []).filter(
+            c => c && c.content && c.content.trim().length > 3 && 
+            !c.title?.toLowerCase().includes("presenter") && 
+            !c.title?.toLowerCase().includes("speaker") &&
+            !/^\s*\d+\s*$/.test(c.content.trim())
+          );
+          if (validCallouts.length === 0) return null;
+          return (
+            <div className="my-6 space-y-3">
+              {validCallouts.map((call, idx) => (
+                <div
+                  key={idx}
+                  className={`p-4 rounded-xl border ${
+                    isDarkMode
+                      ? "border-amber-500/40 bg-amber-950/30 text-amber-200"
+                      : "border-amber-300/80 bg-amber-50/80 text-slate-900"
+                  } text-xs sm:text-sm space-y-1 shadow-xs`}
+                >
+                  <div className={`font-bold ${isDarkMode ? "text-amber-300" : "text-amber-900"}`}>{call.title}</div>
+                  <p className={`${isDarkMode ? "text-slate-200" : "text-slate-800"} leading-relaxed`}>{call.content}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Code Blocks */}
         {sec.codeBlocks && sec.codeBlocks.length > 0 && (
@@ -1297,9 +1503,9 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="pt-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-400 font-mono mt-8">
-        <span className="truncate pr-2">{docTitle || "Document Slide"}</span>
-        <span>{pageNum}</span>
+      <div className={`pt-3 sm:pt-4 border-t ${isDarkMode ? "border-slate-800 text-slate-400" : "border-slate-200 text-slate-500"} flex items-center justify-between text-xs font-mono relative z-10 mt-6`}>
+        <span className="truncate pr-2">{docTitle || "Slide"}</span>
+        <span>{pageNum} / {totalPages}</span>
       </div>
     </div>
   );
@@ -1314,26 +1520,70 @@ const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean }> = (
       {lines.map((line, idx) => {
         const trimmed = line.trim();
 
+        // Suppress presenter notes and speaker notes completely
+        if (
+          trimmed.startsWith("> Speaker Notes:") || 
+          trimmed.startsWith("> **Speaker Notes:**") ||
+          trimmed.startsWith("> Presenter Notes:") ||
+          trimmed.startsWith("> **Presenter Notes:**") ||
+          trimmed === "Speaker Notes:" ||
+          trimmed === "Presenter Notes:" ||
+          trimmed === "**Speaker Notes:**" ||
+          trimmed === "**Presenter Notes:**" ||
+          /^>\s*\d+\s*$/.test(trimmed) ||
+          /^\s*\d+\s*$/.test(trimmed)
+        ) {
+          return null;
+        }
+
+        // Suppress redundant duplicate slide titles like "## Slide 3: STEP 1 · VLAN"
+        if (/^##\s*Slide\s*\d+[\s\:]/i.test(trimmed)) {
+          return null;
+        }
+
+        // Takeaway / Quote Banner
+        if (trimmed.startsWith("> ")) {
+          const quoteText = trimmed.replace(/^>\s*/, "");
+          return (
+            <div key={idx} className={`p-4 sm:p-5 rounded-xl border ${isDark ? "bg-gradient-to-r from-amber-950/40 via-[#182338] to-[#182338] border-amber-500/50 text-amber-100" : "bg-amber-50 border-amber-300 text-amber-950"} my-4 shadow-md flex items-start gap-3`}>
+              <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${isDark ? "bg-amber-500/20 text-amber-300" : "bg-amber-100 text-amber-800"}`}>
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="flex-1 text-xs sm:text-sm font-medium leading-relaxed">
+                {renderBoldText(quoteText.replace(/^\*\*(?:Key Takeaway:?|Takeaway:?)\*\*\s*/i, ""), isDark)}
+              </div>
+            </div>
+          );
+        }
+
+        if (trimmed.startsWith("## ")) {
+          return (
+            <h2 key={idx} className={`text-lg sm:text-xl font-bold mt-5 mb-2 border-b pb-1.5 ${isDark ? "text-amber-400 border-slate-700" : "text-amber-800 border-slate-200"}`}>
+              {renderBoldText(trimmed.replace(/^##\s*/, ""), isDark)}
+            </h2>
+          );
+        }
         if (trimmed.startsWith("### ")) {
           return (
-            <h3 key={idx} className={`text-base sm:text-lg font-bold mt-5 mb-2 border-b pb-1 ${isDark ? "text-white border-slate-700" : "text-slate-900 border-slate-200"}`}>
-              {trimmed.replace("### ", "")}
+            <h3 key={idx} className={`text-base sm:text-lg font-bold mt-4 mb-2 flex items-center gap-2 ${isDark ? "text-amber-300" : "text-amber-800"}`}>
+              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 inline-block"></span>
+              <span>{renderBoldText(trimmed.replace("### ", ""), isDark)}</span>
             </h3>
           );
         }
         if (trimmed.startsWith("#### ")) {
           return (
             <h4 key={idx} className={`text-sm font-bold mt-3 mb-1 ${isDark ? "text-amber-400" : "text-amber-800"}`}>
-              {trimmed.replace("#### ", "")}
+              {renderBoldText(trimmed.replace("#### ", ""), isDark)}
             </h4>
           );
         }
         if (trimmed.startsWith("* ") || trimmed.startsWith("- ")) {
           const itemText = trimmed.substring(2);
           return (
-            <div key={idx} className="flex items-start gap-2 pl-2">
-              <span className={`font-bold mt-1.5 text-[8px] ${isDark ? "text-amber-400" : "text-slate-800"}`}>●</span>
-              <p className={`flex-1 my-0 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(itemText, isDark)}</p>
+            <div key={idx} className={`flex items-start gap-2.5 pl-2 py-1 rounded-lg ${isDark ? "hover:bg-slate-800/40" : "hover:bg-slate-100/60"} transition-colors`}>
+              <span className={`font-bold mt-1 text-[9px] ${isDark ? "text-amber-400" : "text-amber-600"}`}>◆</span>
+              <div className={`flex-1 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(itemText, isDark)}</div>
             </div>
           );
         }
@@ -1341,7 +1591,7 @@ const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean }> = (
           return (
             <div key={idx} className="flex items-start gap-2 pl-2 font-medium">
               <span className={`font-bold ${isDark ? "text-amber-400" : "text-slate-800"}`}>{trimmed.substring(0, 3)}</span>
-              <p className={`flex-1 my-0 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(trimmed.substring(3), isDark)}</p>
+              <div className={`flex-1 my-0 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(trimmed.substring(3), isDark)}</div>
             </div>
           );
         }
@@ -1350,6 +1600,21 @@ const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean }> = (
         }
         if (!trimmed) {
           return <div key={idx} className="h-1" />;
+        }
+
+        // Markdown image support (e.g. diagrams and figures extracted from slides)
+        const imgMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+        if (imgMatch) {
+          const alt = imgMatch[1];
+          const src = imgMatch[2];
+          return (
+            <div key={idx} className="my-4 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/60 border border-slate-700/60 shadow-md">
+              <img src={src} alt={alt || "Slide Figure"} className="max-h-[380px] max-w-full object-contain rounded-lg shadow-sm" />
+              {alt && alt !== "Slide Diagram" && alt !== "Slide Figure" && (
+                <span className="text-[11px] text-slate-400 mt-1 italic text-center">{alt}</span>
+              )}
+            </div>
+          );
         }
 
         // Check if line represents a figure or diagram caption
@@ -1368,7 +1633,14 @@ const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean }> = (
   );
 };
 
-function renderBoldText(text: string, isDark: boolean = false) {
+function renderBoldText(rawText: string, isDark: boolean = false) {
+  const text = (rawText || "")
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+
   const parts = text.split(/(\*\*.*?\*\*|\*.*?\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {

@@ -1,1 +1,236 @@
-[]
+[
+  {
+    "id": "upload-1790224763390",
+    "title": "AutoScaling_MultiAZ_Recovery",
+    "shortTitle": "AutoScaling_MultiAZ_Reco",
+    "description": "A PowerPoint Presentation about Auto-Scaling and Multi-AZ Recovery on AWS for high availability",
+    "pageCount": 9,
+    "sections": [
+      {
+        "id": "section-upload-1790224763390-1",
+        "pageNumber": 1,
+        "title": "HIGH AVAILABILITY ON AWS",
+        "subtitle": "Slide 1 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* \nRecovery\n\n* Keeping a virtual server running — and what happens to its data — when an entire availability zone goes down.",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/1"
+      },
+      {
+        "id": "section-upload-1790224763390-2",
+        "pageNumber": 2,
+        "title": "THE BASICS",
+        "subtitle": "Slide 2 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* What Auto-Scaling Does\n* Multiple subnets\n* Auto-scaling can start EC2 instances across several subnets, not just one.\n* Automatic failover\n* If an entire availability zone has an outage, a new virtual server can be launched into another subnet in another zone.\n* Continuous monitoring\n* Auto-scaling watches the health of running servers and reacts when something goes wrong.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 2",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/2"
+      },
+      {
+        "id": "section-upload-1790224763390-3",
+        "pageNumber": 3,
+        "title": "SETTING IT UP",
+        "subtitle": "Slide 3 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Launch Configuration\n* Everything needed to launch a single virtual server:\n* Image (AMI) to start the new server from\n* Instance type — the size of the virtual server\n* Auto-Scaling Group\n* Tells EC2 how many servers to run and where:\n* Min / max / desired number of virtual servers\n* Health check for the virtual servers\n* Subnets to launch virtual servers in\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 3",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/3"
+      },
+      {
+        "id": "section-upload-1790224763390-4",
+        "pageNumber": 4,
+        "title": "PUTTING IT TOGETHER",
+        "subtitle": "Slide 4 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* \n• Health check for virtual servers\n• Subnets to launch virtual servers in\n\n* \n• Size of virtual server\n\n* \nvirtual servers\n\n* How Auto-Scaling Reacts to a Failure\n* Auto-scaling group\n* Launch configuration\n* 2. If there aren't enough healthy virtual servers, new ones are launched based on the launch configuration.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 4",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/4"
+      },
+      {
+        "id": "section-upload-1790224763390-5",
+        "pageNumber": 5,
+        "title": "TWO DIFFERENT RECOVERY MECHANISMS",
+        "subtitle": "Slide 5 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* CloudWatch Alarm Recovery\n* Launches an identical copy of the original virtual server if it fails — but only in the same availability zone.\n* Why only the same zone?\n* The private IP address and the EBS volume of a virtual server are bound to a single subnet and a single availability zone.\n* Auto-Scaling Failover\n* Can recover a failed virtual server into a completely different availability zone — true protection against a data center outage.\n* Example: a Jenkins CI server\n* If a team relies on Jenkins to test, build, and deploy software, auto-scaling lets it fail over into another zone instead of staying down during a data center outage.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 5",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/5"
+      },
+      {
+        "id": "section-upload-1790224763390-6",
+        "pageNumber": 6,
+        "title": "READ BEFORE YOU RELY ON AUTO-SCALING",
+        "subtitle": "Slide 6 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Pitfall: Network-Attached Storage\n* Availability zone A\n* Virtual server\n* EBS volume\n* EBS volume is bound to availability zone A\n* Availability zone B\n* Virtual server\n* EBS volume\n* New and empty EBS volume\n* Launch new virtual server in other availability zone\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 6",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/6"
+      },
+      {
+        "id": "section-upload-1790224763390-7",
+        "pageNumber": 7,
+        "title": "FIXING THE PITFALL",
+        "subtitle": "Slide 7 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Three Ways to Recover Your Data\n* 1\n* Use a multi-AZ managed service\n* 2\n* Use EBS snapshots\n* Snapshot your EBS volumes and restore from the snapshot when a server recovers in another zone. Snapshots are stored on S3, so they're available across zones.\n* 3\n* Use distributed third-party storage\n* Tools like GlusterFS, DRBD, or MongoDB replicate data across zones themselves — powerful, but adds real operational complexity.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 7",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/7"
+      },
+      {
+        "id": "section-upload-1790224763390-8",
+        "pageNumber": 8,
+        "title": "WORKED EXAMPLE",
+        "subtitle": "Slide 8 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Choosing a Recovery Strategy for Jenkins\n* 1\n* The constraint\n* 2\n* Why plain EBS isn't enough\n* An EBS volume only exists in a single availability zone, which is exactly the problem being solved — so it can't be the whole answer.\n* 3\n* Why skip distributed storage\n* GlusterFS, DRBD, and similar tools would work, but they introduce a level of operational complexity that isn't justified here.\n* 4\n* The chosen solution: EBS snapshots\n* Recover the virtual server in another availability zone using an EBS snapshot. You only lose the data written since the last snapshot — not the entire volume.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 8",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/8"
+      },
+      {
+        "id": "section-upload-1790224763390-9",
+        "pageNumber": 9,
+        "title": "KEY TAKEAWAYS",
+        "subtitle": "Slide 9 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Auto-scaling needs two pieces: a launch configuration (what to launch) and an auto-scaling group (how many, where, and how to monitor).\n* A CloudWatch alarm can only recover a server in the same availability zone; auto-scaling can fail it over into a different zone entirely.\n* EBS volumes are bound to a single availability zone — they don't automatically follow a server that recovers elsewhere.\n* Fix that gap with a multi-AZ managed service, EBS snapshots, or distributed third-party storage — pick based on what your app actually needs.\n* For disk-based apps like Jenkins, EBS snapshots hit the sweet spot: real recovery, without the complexity of distributed storage.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 9",
+        "callouts": [],
+        "codeBlocks": [],
+        "slideImageUrl": "/api/slide/upload-1790224763390/9"
+      }
+    ],
+    "fileFormat": "pptx",
+    "fileType": "application/pdf",
+    "subject": "Cloud Computing With Web Services",
+    "unit": "Unit 3",
+    "unitNumber": 3,
+    "unitTitle": "",
+    "courseCode": "CCA42512",
+    "uploadedBy": "Dr Sathish Kumar",
+    "uploadedAt": "9/24/2026",
+    "isPublished": true,
+    "tags": [
+      "PPTX",
+      "Cloud Computing With Web Services"
+    ],
+    "downloadUrl": "/api/download/upload-1790224763390",
+    "originalFileUrl": "/api/file/upload-1790224763390",
+    "originalFileName": "AutoScaling_MultiAZ_Recovery.pptx",
+    "slideImages": [
+      "/api/slide/upload-1790224763390/1",
+      "/api/slide/upload-1790224763390/2",
+      "/api/slide/upload-1790224763390/3",
+      "/api/slide/upload-1790224763390/4",
+      "/api/slide/upload-1790224763390/5",
+      "/api/slide/upload-1790224763390/6",
+      "/api/slide/upload-1790224763390/7",
+      "/api/slide/upload-1790224763390/8",
+      "/api/slide/upload-1790224763390/9"
+    ]
+  },
+  {
+    "id": "upload-1790224448104",
+    "title": "AutoScaling_MultiAZ_Recovery",
+    "shortTitle": "AutoScaling_MultiAZ",
+    "description": "PowerPoint Presentation with 9 slides covering High Availability and AutoScaling recovery.",
+    "pageCount": 9,
+    "sections": [
+      {
+        "id": "section-upload-1790224448104-1",
+        "pageNumber": 1,
+        "title": "HIGH AVAILABILITY ON AWS",
+        "subtitle": "Slide 1 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* \nRecovery\n\n* Keeping a virtual server running — and what happens to its data — when an entire availability zone goes down.",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-2",
+        "pageNumber": 2,
+        "title": "THE BASICS",
+        "subtitle": "Slide 2 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* What Auto-Scaling Does\n* Multiple subnets\n* Auto-scaling can start EC2 instances across several subnets, not just one.\n* Automatic failover\n* If an entire availability zone has an outage, a new virtual server can be launched into another subnet in another zone.\n* Continuous monitoring\n* Auto-scaling watches the health of running servers and reacts when something goes wrong.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 2",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-3",
+        "pageNumber": 3,
+        "title": "SETTING IT UP",
+        "subtitle": "Slide 3 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Launch Configuration\n* Everything needed to launch a single virtual server:\n* Image (AMI) to start the new server from\n* Instance type — the size of the virtual server\n* Auto-Scaling Group\n* Tells EC2 how many servers to run and where:\n* Min / max / desired number of virtual servers\n* Health check for the virtual servers\n* Subnets to launch virtual servers in\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 3",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-4",
+        "pageNumber": 4,
+        "title": "PUTTING IT TOGETHER",
+        "subtitle": "Slide 4 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* \n• Health check for virtual servers\n• Subnets to launch virtual servers in\n\n* \n• Size of virtual server\n\n* \nvirtual servers\n\n* How Auto-Scaling Reacts to a Failure\n* Auto-scaling group\n* Launch configuration\n* 2. If there aren't enough healthy virtual servers, new ones are launched based on the launch configuration.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 4",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-5",
+        "pageNumber": 5,
+        "title": "TWO DIFFERENT RECOVERY MECHANISMS",
+        "subtitle": "Slide 5 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* CloudWatch Alarm Recovery\n* Launches an identical copy of the original virtual server if it fails — but only in the same availability zone.\n* Why only the same zone?\n* The private IP address and the EBS volume of a virtual server are bound to a single subnet and a single availability zone.\n* Auto-Scaling Failover\n* Can recover a failed virtual server into a completely different availability zone — true protection against a data center outage.\n* Example: a Jenkins CI server\n* If a team relies on Jenkins to test, build, and deploy software, auto-scaling lets it fail over into another zone instead of staying down during a data center outage.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 5",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-6",
+        "pageNumber": 6,
+        "title": "READ BEFORE YOU RELY ON AUTO-SCALING",
+        "subtitle": "Slide 6 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Pitfall: Network-Attached Storage\n* Availability zone A\n* Virtual server\n* EBS volume\n* EBS volume is bound to availability zone A\n* Availability zone B\n* Virtual server\n* EBS volume\n* New and empty EBS volume\n* Launch new virtual server in other availability zone\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 6",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-7",
+        "pageNumber": 7,
+        "title": "FIXING THE PITFALL",
+        "subtitle": "Slide 7 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Three Ways to Recover Your Data\n* 1\n* Use a multi-AZ managed service\n* 2\n* Use EBS snapshots\n* Snapshot your EBS volumes and restore from the snapshot when a server recovers in another zone. Snapshots are stored on S3, so they're available across zones.\n* 3\n* Use distributed third-party storage\n* Tools like GlusterFS, DRBD, or MongoDB replicate data across zones themselves — powerful, but adds real operational complexity.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 7",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-8",
+        "pageNumber": 8,
+        "title": "WORKED EXAMPLE",
+        "subtitle": "Slide 8 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Choosing a Recovery Strategy for Jenkins\n* 1\n* The constraint\n* 2\n* Why plain EBS isn't enough\n* An EBS volume only exists in a single availability zone, which is exactly the problem being solved — so it can't be the whole answer.\n* 3\n* Why skip distributed storage\n* GlusterFS, DRBD, and similar tools would work, but they introduce a level of operational complexity that isn't justified here.\n* 4\n* The chosen solution: EBS snapshots\n* Recover the virtual server in another availability zone using an EBS snapshot. You only lose the data written since the last snapshot — not the entire volume.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 8",
+        "callouts": [],
+        "codeBlocks": []
+      },
+      {
+        "id": "section-upload-1790224448104-9",
+        "pageNumber": 9,
+        "title": "KEY TAKEAWAYS",
+        "subtitle": "Slide 9 of 9 • PowerPoint Deck",
+        "contentMarkdown": "* Auto-scaling needs two pieces: a launch configuration (what to launch) and an auto-scaling group (how many, where, and how to monitor).\n* A CloudWatch alarm can only recover a server in the same availability zone; auto-scaling can fail it over into a different zone entirely.\n* EBS volumes are bound to a single availability zone — they don't automatically follow a server that recovers elsewhere.\n* Fix that gap with a multi-AZ managed service, EBS snapshots, or distributed third-party storage — pick based on what your app actually needs.\n* For disk-based apps like Jenkins, EBS snapshots hit the sweet spot: real recovery, without the complexity of distributed storage.\n* AUTO-SCALING & MULTI-AZ RECOVERY\n* 9",
+        "callouts": [],
+        "codeBlocks": []
+      }
+    ],
+    "fileFormat": "pptx",
+    "fileType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "subject": "Cloud Computing With Web Services",
+    "unit": "Unit 3",
+    "unitNumber": 3,
+    "unitTitle": "",
+    "courseCode": "CCA42512",
+    "uploadedBy": "Dr Sathish Kumar",
+    "uploadedAt": "9/24/2026",
+    "isPublished": true,
+    "tags": [
+      "PPTX",
+      "Cloud Computing With Web Services"
+    ],
+    "downloadUrl": "/api/download/upload-1790224448104",
+    "originalFileUrl": "/api/file/upload-1790224448104",
+    "originalFileName": "AutoScaling_MultiAZ_Recovery.pptx"
+  }
+]

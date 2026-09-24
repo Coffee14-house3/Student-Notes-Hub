@@ -1293,6 +1293,18 @@ export const TeacherPortal: React.FC<Props> = ({
                                         </div>
 
                                         <div className="flex items-center gap-1.5">
+                                          {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
+                                            <a
+                                              href={doc.downloadUrl || doc.originalFileUrl || `/api/download/${doc.id}`}
+                                              download={doc.originalFileName || `${doc.title}.pptx`}
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="px-2 py-1 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                              title="Download original PowerPoint presentation (.pptx)"
+                                            >
+                                              <Download className="w-3 h-3" />
+                                              <span>PPT</span>
+                                            </a>
+                                          )}
                                           <button
                                             onClick={() => onSelectDocument(doc.id, true)}
                                             className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-400 text-xs font-semibold flex items-center gap-1 cursor-pointer"
@@ -1304,7 +1316,7 @@ export const TeacherPortal: React.FC<Props> = ({
                                             onClick={() => onSelectDocument(doc.id, false)}
                                             className="px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1 transition-all shadow-xs cursor-pointer"
                                           >
-                                            <span>Open Reader</span>
+                                            <span>{doc.fileFormat === "pptx" || doc.fileFormat === "ppt" ? "View Slides" : "Open Reader"}</span>
                                             <ArrowRight className="w-3 h-3" />
                                           </button>
                                         </div>
@@ -1451,6 +1463,18 @@ export const TeacherPortal: React.FC<Props> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
+                        {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
+                          <a
+                            href={doc.downloadUrl || doc.originalFileUrl || `/api/download/${doc.id}`}
+                            download={doc.originalFileName || `${doc.title}.pptx`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Download original PowerPoint presentation (.pptx)"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>PPT</span>
+                          </a>
+                        )}
                         <button
                           onClick={() => onSelectDocument(doc.id, true)}
                           className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-400 text-xs font-semibold flex items-center gap-1 cursor-pointer"
@@ -1462,7 +1486,7 @@ export const TeacherPortal: React.FC<Props> = ({
                           onClick={() => onSelectDocument(doc.id, false)}
                           className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1 transition-all shadow-xs cursor-pointer"
                         >
-                          <span>Open Reader</span>
+                          <span>{doc.fileFormat === "pptx" || doc.fileFormat === "ppt" ? "View Slides" : "Open Reader"}</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </button>
                       </div>

@@ -600,6 +600,19 @@ export const StudentPortal: React.FC<Props> = ({
                                     </button>
 
                                     <div className="flex items-center gap-1.5">
+                                      {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
+                                        <a
+                                          href={doc.downloadUrl || doc.originalFileUrl || `/api/download/${doc.id}`}
+                                          download={doc.originalFileName || `${doc.title}.pptx`}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="px-2 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 transition-all flex items-center gap-1 font-semibold text-xs cursor-pointer"
+                                          title="Download original PowerPoint presentation (.pptx)"
+                                        >
+                                          <Download className="w-3.5 h-3.5" />
+                                          <span className="hidden sm:inline">PPT</span>
+                                        </a>
+                                      )}
+
                                       <button
                                         onClick={() => onSelectDocument(doc.id, true)}
                                         className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-400 transition-all flex items-center gap-1 font-semibold text-xs border border-slate-700 cursor-pointer"
@@ -613,7 +626,7 @@ export const StudentPortal: React.FC<Props> = ({
                                         className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all flex items-center gap-1 text-xs shadow-sm cursor-pointer"
                                         title="Open interactive reader mode"
                                       >
-                                        <span>Read</span>
+                                        <span>{doc.fileFormat === "pptx" || doc.fileFormat === "ppt" ? "View Slides" : "Read"}</span>
                                         <ArrowRight className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
@@ -708,6 +721,19 @@ export const StudentPortal: React.FC<Props> = ({
                   </button>
 
                   <div className="flex items-center gap-2">
+                    {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
+                      <a
+                        href={doc.downloadUrl || doc.originalFileUrl || `/api/download/${doc.id}`}
+                        download={doc.originalFileName || `${doc.title}.pptx`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-2 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 transition-all flex items-center gap-1 font-semibold text-xs cursor-pointer"
+                        title="Download original PowerPoint presentation (.pptx)"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">PPT</span>
+                      </a>
+                    )}
+
                     <button
                       onClick={() => onSelectDocument(doc.id, true)}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-400 transition-all flex items-center gap-1 font-semibold text-xs border border-slate-700 cursor-pointer"
@@ -721,7 +747,7 @@ export const StudentPortal: React.FC<Props> = ({
                       className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all flex items-center gap-1 text-xs shadow-sm cursor-pointer"
                       title="Open interactive reader mode"
                     >
-                      <span>Read</span>
+                      <span>{doc.fileFormat === "pptx" || doc.fileFormat === "ppt" ? "View Slides" : "Read"}</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   </div>

@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
+import AdmZip from "adm-zip";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -29,6 +31,16 @@ dotenv.config();
 
 async function parsePdfBuffer(pdfBuffer: Buffer): Promise<{ text: string; pageCount: number; pages: { pageNum: number; text: string }[] }> {
   try {
+    if (!pdfBuffer || pdfBuffer.length < 5) {
+      return { text: "", pageCount: 1, pages: [] };
+    }
+
+    // Verify buffer starts with %PDF- signature
+    const headerSlice = pdfBuffer.slice(0, 1024).toString("latin1");
+    if (!headerSlice.includes("%PDF-")) {
+      return { text: "", pageCount: 1, pages: [] };
+    }
+
     // @ts-ignore
     const pdfModule = await import("pdf-parse");
     const PDFParseClass = (pdfModule as any).PDFParse || (pdfModule as any).default?.PDFParse;
@@ -119,7 +131,7 @@ async function parsePdfBuffer(pdfBuffer: Buffer): Promise<{ text: string; pageCo
       return { text, pageCount: totalPages, pages: pagesList };
     }
   } catch (err: any) {
-    console.warn("pdf-parse extraction error:", err?.message);
+    // Safe graceful fallback for non-standard or encrypted PDFs
   }
 
   return { text: "", pageCount: 1, pages: [] };
@@ -327,6 +339,9 @@ async function startServer() {
   const DOCS_FILE = path.join(DATA_DIR, "documents.json");
   const ANNOUNCEMENTS_FILE = path.join(DATA_DIR, "announcements.json");
   const PDF_DIR = path.join(DATA_DIR, "pdfs");
+  const RAW_FILES_DIR = path.join(DATA_DIR, "files");
+  const SLIDES_DIR = path.join(DATA_DIR, "slides");
+  const rawFilesMap: Map<string, { buffer: Buffer; fileName: string; mimeType: string }> = new Map();
 
   function ensureDataDir() {
     try {
@@ -335,6 +350,12 @@ async function startServer() {
       }
       if (!fs.existsSync(PDF_DIR)) {
         fs.mkdirSync(PDF_DIR, { recursive: true });
+      }
+      if (!fs.existsSync(RAW_FILES_DIR)) {
+        fs.mkdirSync(RAW_FILES_DIR, { recursive: true });
+      }
+      if (!fs.existsSync(SLIDES_DIR)) {
+        fs.mkdirSync(SLIDES_DIR, { recursive: true });
       }
     } catch (e) {
       console.warn("[Storage] Could not create data directory:", e);
@@ -497,6 +518,200 @@ async function startServer() {
     res.send(buf);
   });
 
+  // Route to stream or view any raw uploaded file (PPTX, PPT, PDF, DOCX, etc.)
+  app.get("/api/file/:id", async (req, res) => {
+    const fileId = req.params.id;
+    let fileInfo = rawFilesMap.get(fileId);
+    if (!fileInfo && fs.existsSync(RAW_FILES_DIR)) {
+      try {
+        const matchingFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${fileId}.`) || f === fileId);
+        if (matchingFile) {
+          const buf = fs.readFileSync(path.join(RAW_FILES_DIR, matchingFile));
+          const ext = path.extname(matchingFile).toLowerCase();
+          const mimeType = ext === ".pptx" ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            : ext === ".ppt" ? "application/vnd.ms-powerpoint"
+            : ext === ".pdf" ? "application/pdf"
+            : ext === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : "application/octet-stream";
+          fileInfo = { buffer: buf, fileName: matchingFile, mimeType };
+          rawFilesMap.set(fileId, fileInfo);
+        }
+      } catch {}
+    }
+
+    if (!fileInfo) {
+      const pdfBuf = pdfBuffers.get(fileId);
+      if (pdfBuf) {
+        fileInfo = { buffer: pdfBuf, fileName: `${fileId}.pdf`, mimeType: "application/pdf" };
+      }
+    }
+
+    if (!fileInfo) {
+      return res.status(404).json({ error: "File not found or session expired" });
+    }
+
+    res.setHeader("Content-Type", fileInfo.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(fileInfo.fileName)}"`);
+    res.setHeader("Content-Length", fileInfo.buffer.length);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(fileInfo.buffer);
+  });
+
+  // Route to download original untouched uploaded file
+  app.get("/api/download/:id", async (req, res) => {
+    const fileId = req.params.id;
+    let fileInfo = rawFilesMap.get(fileId);
+    if (!fileInfo && fs.existsSync(RAW_FILES_DIR)) {
+      try {
+        const matchingFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${fileId}.`) || f === fileId);
+        if (matchingFile) {
+          const buf = fs.readFileSync(path.join(RAW_FILES_DIR, matchingFile));
+          const ext = path.extname(matchingFile).toLowerCase();
+          const mimeType = ext === ".pptx" ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            : ext === ".ppt" ? "application/vnd.ms-powerpoint"
+            : ext === ".pdf" ? "application/pdf"
+            : ext === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : "application/octet-stream";
+          fileInfo = { buffer: buf, fileName: matchingFile, mimeType };
+          rawFilesMap.set(fileId, fileInfo);
+        }
+      } catch {}
+    }
+
+    if (!fileInfo) {
+      const pdfBuf = pdfBuffers.get(fileId);
+      if (pdfBuf) {
+        fileInfo = { buffer: pdfBuf, fileName: `${fileId}.pdf`, mimeType: "application/pdf" };
+      }
+    }
+
+    if (!fileInfo) {
+      const matchingDoc = serverDocuments.find(d => d.id === fileId);
+      if (matchingDoc) {
+        let exportContent = `# ${matchingDoc.title}\n\n`;
+        if (matchingDoc.sections) {
+          matchingDoc.sections.forEach(s => {
+            exportContent += `\n---\n\n## ${s.title}\n\n${s.contentMarkdown || ""}\n`;
+          });
+        }
+        const buf = Buffer.from(exportContent, "utf-8");
+        const safeName = `${matchingDoc.title.replace(/[^a-zA-Z0-9_\-\.]/g, "_")}.md`;
+        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeName)}"`);
+        res.setHeader("Content-Length", buf.length);
+        return res.send(buf);
+      }
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    res.setHeader("Content-Type", fileInfo.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileInfo.fileName)}"`);
+    res.setHeader("Content-Length", fileInfo.buffer.length);
+    res.send(fileInfo.buffer);
+  });
+
+  // Helper function to render PowerPoint presentations (.pptx, .ppt) directly to exact pixel-for-pixel slide images
+  async function renderPptxToSlideImages(docId: string, pptxPath: string): Promise<string[]> {
+    const docSlideDir = path.join(SLIDES_DIR, docId);
+    if (!fs.existsSync(docSlideDir)) {
+      try { fs.mkdirSync(docSlideDir, { recursive: true }); } catch {}
+    }
+
+    // Check if images already exist
+    const existing = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+    if (existing.length > 0) {
+      return existing
+        .sort((a, b) => {
+          const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+          const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+          return numA - numB;
+        })
+        .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
+    }
+
+    const tempDir = path.join("/tmp", `conv_${docId}_${Date.now()}`);
+    try { fs.mkdirSync(tempDir, { recursive: true }); } catch {}
+
+    try {
+      console.log(`[PPTX-RENDER] Converting ${pptxPath} to exact PDF using LibreOffice...`);
+      try {
+        execSync(`libreoffice --headless --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
+          timeout: 60000,
+          stdio: "pipe"
+        });
+      } catch (loErr) {
+        console.warn(`[PPTX-RENDER] LibreOffice attempt failed, trying soffice:`, loErr);
+        execSync(`soffice --headless --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
+          timeout: 60000,
+          stdio: "pipe"
+        });
+      }
+
+      const pdfFiles = fs.readdirSync(tempDir).filter(f => f.toLowerCase().endsWith(".pdf"));
+      if (pdfFiles.length === 0) {
+        console.warn(`[PPTX-RENDER] No PDF was output by LibreOffice for ${docId}`);
+        return [];
+      }
+
+      const pdfPath = path.join(tempDir, pdfFiles[0]);
+      try {
+        const pdfBuf = fs.readFileSync(pdfPath);
+        pdfBuffers.set(docId, pdfBuf);
+        const cachedPdfPath = path.join(RAW_FILES_DIR, `${docId}.pdf`);
+        if (!fs.existsSync(cachedPdfPath)) {
+          fs.writeFileSync(cachedPdfPath, pdfBuf);
+        }
+      } catch (cacheErr) {
+        console.warn(`[PPTX-RENDER] Could not cache PDF:`, cacheErr);
+      }
+
+      console.log(`[PPTX-RENDER] Rendering slides into high-resolution images via pdftoppm...`);
+      execSync(`pdftoppm -png -r 150 "${pdfPath}" "${path.join(docSlideDir, "slide")}"`, {
+        timeout: 60000,
+        stdio: "pipe"
+      });
+
+      const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+      console.log(`[PPTX-RENDER] Successfully produced ${generated.length} exact slide images for ${docId}`);
+      return generated
+        .sort((a, b) => {
+          const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+          const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+          return numA - numB;
+        })
+        .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
+    } catch (err) {
+      console.error(`[PPTX-RENDER] Slide conversion error:`, err);
+      return [];
+    } finally {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  // Route to stream pre-rendered exact high-res slide image
+  app.get("/api/slide/:id/:page", async (req, res) => {
+    const docId = req.params.id;
+    const pageNum = parseInt(req.params.page, 10);
+    const docSlideDir = path.join(SLIDES_DIR, docId);
+
+    if (fs.existsSync(docSlideDir)) {
+      const files = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+      const match = files.find(f => {
+        const num = parseInt(f.replace(/\D/g, "") || "-1", 10);
+        return num === pageNum;
+      });
+      if (match) {
+        const filePath = path.join(docSlideDir, match);
+        const ext = path.extname(match).toLowerCase();
+        const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.sendFile(filePath);
+      }
+    }
+    return res.status(404).json({ error: "Slide image not found" });
+  });
+
   // Document Parser API route: parses uploaded file (PDF, DOCX, PPTX, PPT, DOC, TXT, MD, Code, JSON) into structured NoteDocument
   app.post("/api/parse-document", async (req, res) => {
     try {
@@ -521,23 +736,7 @@ async function startServer() {
       const cleanFileName = fileName.replace(/\.[^/.]+$/, "");
       const lowerName = fileName.toLowerCase();
 
-      // Format detection
-      const isPdf = lowerName.endsWith(".pdf") || fileType?.includes("pdf") || fileContent.startsWith("data:application/pdf");
-      const isDocx = lowerName.endsWith(".docx") || fileType?.includes("wordprocessingml") || fileContent.startsWith("data:application/vnd.openxmlformats-officedocument.wordprocessingml");
-      const isPptx = lowerName.endsWith(".pptx") || fileType?.includes("presentationml") || fileContent.startsWith("data:application/vnd.openxmlformats-officedocument.presentationml");
-      const isDoc = lowerName.endsWith(".doc") || fileType?.includes("msword");
-      const isPpt = lowerName.endsWith(".ppt") || fileType?.includes("ms-powerpoint") || fileType?.includes("powerpoint");
-
-      let fileFormat: "pdf" | "docx" | "doc" | "pptx" | "ppt" | "markdown" | "code" | "text" = "text";
-      if (isPdf) fileFormat = "pdf";
-      else if (isDocx) fileFormat = "docx";
-      else if (isPptx) fileFormat = "pptx";
-      else if (isDoc) fileFormat = "doc";
-      else if (isPpt) fileFormat = "ppt";
-      else if (lowerName.endsWith(".md")) fileFormat = "markdown";
-      else if (/\.(py|js|ts|jsx|tsx|json|html|css|sh|sql)$/i.test(lowerName)) fileFormat = "code";
-
-      // Extract binary buffer
+      // Extract binary buffer first
       let fileBuffer: Buffer;
       if (fileContent.startsWith("data:")) {
         const base64Data = fileContent.split(",")[1];
@@ -552,12 +751,75 @@ async function startServer() {
         fileBuffer = Buffer.from(fileContent);
       }
 
+      // Inspect real file magic bytes to prevent misclassified files (e.g. PPTX named as .pdf)
+      let realIsPdf = false;
+      let realIsPptx = false;
+      let realIsDocx = false;
+      let realIsDoc = false;
+      let realIsPpt = false;
+
+      if (fileBuffer && fileBuffer.length >= 4) {
+        const magicHeader = fileBuffer.slice(0, 1024).toString("latin1");
+        const isZip = fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4B && fileBuffer[2] === 0x03 && fileBuffer[3] === 0x04;
+        const isOle = fileBuffer.length >= 8 && fileBuffer[0] === 0xD0 && fileBuffer[1] === 0xCF && fileBuffer[2] === 0x11 && fileBuffer[3] === 0xE0;
+
+        if (magicHeader.includes("%PDF-")) {
+          realIsPdf = true;
+        } else if (isZip) {
+          try {
+            const testZip = new AdmZip(fileBuffer);
+            const entries = testZip.getEntries().map(e => e.entryName.toLowerCase());
+            if (entries.some(e => e.startsWith("ppt/") || e.includes("presentationml"))) {
+              realIsPptx = true;
+            } else if (entries.some(e => e.startsWith("word/") || e.includes("wordprocessingml"))) {
+              realIsDocx = true;
+            }
+          } catch {}
+        } else if (isOle) {
+          if (lowerName.endsWith(".ppt") || fileType?.includes("powerpoint")) realIsPpt = true;
+          else realIsDoc = true;
+        }
+      }
+
+      // Resolve final format with magic bytes priority over file extension
+      let isPdf = realIsPdf || (!realIsPptx && !realIsDocx && !realIsDoc && !realIsPpt && (lowerName.endsWith(".pdf") || fileType?.includes("pdf") || fileContent.startsWith("data:application/pdf")));
+      let isDocx = realIsDocx || (!realIsPdf && (lowerName.endsWith(".docx") || fileType?.includes("wordprocessingml") || fileContent.startsWith("data:application/vnd.openxmlformats-officedocument.wordprocessingml")));
+      let isPptx = realIsPptx || (!realIsPdf && (lowerName.endsWith(".pptx") || fileType?.includes("presentationml") || fileContent.startsWith("data:application/vnd.openxmlformats-officedocument.presentationml")));
+      let isDoc = realIsDoc || (!realIsPdf && (lowerName.endsWith(".doc") || fileType?.includes("msword")));
+      let isPpt = realIsPpt || (!realIsPdf && (lowerName.endsWith(".ppt") || fileType?.includes("ms-powerpoint") || fileType?.includes("powerpoint")));
+
+      let fileFormat: "pdf" | "docx" | "doc" | "pptx" | "ppt" | "markdown" | "code" | "text" = "text";
+      if (isPdf) fileFormat = "pdf";
+      else if (isDocx) fileFormat = "docx";
+      else if (isPptx) fileFormat = "pptx";
+      else if (isDoc) fileFormat = "doc";
+      else if (isPpt) fileFormat = "ppt";
+      else if (lowerName.endsWith(".md")) fileFormat = "markdown";
+      else if (/\.(py|js|ts|jsx|tsx|json|html|css|sh|sql)$/i.test(lowerName)) fileFormat = "code";
+
+      let savedRawFilePath = "";
+      // Persist the original raw file (PPTX, PDF, DOCX, etc.) without alterations
+      try {
+        ensureDataDir();
+        const fileExt = path.extname(fileName) || (isPptx ? ".pptx" : isPdf ? ".pdf" : isDocx ? ".docx" : isPpt ? ".ppt" : isDoc ? ".doc" : ".bin");
+        const safeStoredName = `${docId}${fileExt}`;
+        savedRawFilePath = path.join(RAW_FILES_DIR, safeStoredName);
+        fs.writeFileSync(savedRawFilePath, fileBuffer);
+        rawFilesMap.set(docId, {
+          buffer: fileBuffer,
+          fileName,
+          mimeType: fileType || (isPptx ? "application/vnd.openxmlformats-officedocument.presentationml.presentation" : isPdf ? "application/pdf" : "application/octet-stream")
+        });
+      } catch (saveRawErr) {
+        console.warn("[Storage] Notice writing raw file to disk:", saveRawErr);
+      }
+
       let extractedText = "";
       let pdfPageCount = 1;
       let extractedPages: { pageNum: number; title?: string; subtitle?: string; text: string; callouts?: any[] }[] = [];
 
       // 1. PDF Parser
-      if (isPdf) {
+      if (isPdf && realIsPdf) {
         try {
           if (fileBuffer) {
             pdfBuffers.set(docId, fileBuffer);
@@ -800,6 +1062,22 @@ Output ONLY valid JSON in this format:
         ? `Word Document with ${sections.length} sections/pages.`
         : `Parsed ${isPdf ? 'PDF' : 'Course'} note containing ${sections.length} pages.`;
 
+      let slideImageUrls: string[] = [];
+      if ((isPptx || isPpt || realIsPptx || realIsPpt) && savedRawFilePath && fs.existsSync(savedRawFilePath)) {
+        try {
+          slideImageUrls = await renderPptxToSlideImages(docId, savedRawFilePath);
+          if (slideImageUrls.length > 0) {
+            sections.forEach((sec, idx) => {
+              if (slideImageUrls[idx]) {
+                sec.slideImageUrl = slideImageUrls[idx];
+              }
+            });
+          }
+        } catch (loErr) {
+          console.warn("[PPTX-RENDER] Failed rendering slide images:", loErr);
+        }
+      }
+
       const finalDoc = {
         id: docId,
         title: title || docMeta.title || cleanFileName,
@@ -808,8 +1086,12 @@ Output ONLY valid JSON in this format:
         pageCount: sections.length,
         sections: sections,
         fileFormat,
-        pdfUrl: isPdf ? `/api/pdf/${docId}` : undefined,
-        pdfDataUrl: isPdf && typeof fileContent === "string" && fileContent.startsWith("data:") ? fileContent : undefined,
+        pdfUrl: ((isPdf && realIsPdf) || pdfBuffers.has(docId)) ? `/api/pdf/${docId}` : undefined,
+        pdfDataUrl: (isPdf && realIsPdf) && typeof fileContent === "string" && fileContent.startsWith("data:") ? fileContent : undefined,
+        slideImages: slideImageUrls.length > 0 ? slideImageUrls : undefined,
+        downloadUrl: `/api/download/${docId}`,
+        originalFileUrl: `/api/file/${docId}`,
+        originalFileName: fileName,
         fileType: fileType || (isPdf ? "application/pdf" : isDocx ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : isPptx ? "application/vnd.openxmlformats-officedocument.presentationml.presentation" : undefined),
         subject: subject || "AWS Cloud & Labs",
         unit: unit || "Unit 1",

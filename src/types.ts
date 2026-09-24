@@ -59,6 +59,7 @@ export interface NoteSection {
   title: string;
   subtitle?: string;
   contentMarkdown: string;
+  slideImageUrl?: string;
   callouts?: CalloutBox[];
   tables?: TableData[];
   diagrams?: DiagramData[];
@@ -76,6 +77,7 @@ export interface NoteDocument {
   sections: NoteSection[];
   pdfUrl?: string;
   pdfDataUrl?: string;
+  slideImages?: string[];
   fileType?: string;
   fileFormat?: "pdf" | "docx" | "doc" | "pptx" | "ppt" | "markdown" | "code" | "text";
   subject?: string;
@@ -88,6 +90,8 @@ export interface NoteDocument {
   isPublished?: boolean;
   tags?: string[];
   downloadUrl?: string;
+  originalFileUrl?: string;
+  originalFileName?: string;
 }
 
 export interface CourseAnnouncement {
