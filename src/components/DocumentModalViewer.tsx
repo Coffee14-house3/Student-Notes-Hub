@@ -506,60 +506,55 @@ export const DocumentModalViewer: React.FC<Props> = ({
       setActiveSectionId(sec.id);
     }
 
-    // In PDF or PPTX presentation mode, PdfCanvasViewer manages continuous canvas navigation
-    if (viewMode === "pdf" || isPptxDoc) {
-      return;
-    }
+    // Scroll to the specified page/section across continuous and single page modes
+    setTimeout(() => {
+      const pageEl = window.document.getElementById(`doc-page-${newPage}`);
+      if (pageEl) {
+        isProgrammaticScrollRef.current = true;
+        try {
+          pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch {
+          // fallback
+        }
 
-    const container = pageContainerRef.current;
-    if (!container) return;
+        const container = pageContainerRef.current;
+        if (container) {
+          const scale = (zoomLevel || 100) / 100;
+          const containerRect = container.getBoundingClientRect();
+          const pageRect = pageEl.getBoundingClientRect();
+          const relativeTop = (pageRect.top - containerRect.top) / scale;
+          const targetScrollTop = container.scrollTop + relativeTop - 20;
 
-    if (!isContinuousScroll) {
-      // In Single Page mode: reset container scroll to top for the selected slide
-      container.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
+          container.scrollTo({
+            top: Math.max(0, targetScrollTop),
+            behavior: "smooth"
+          });
+        }
 
-    // In Continuous All Pages mode:
-    const pageEl = window.document.getElementById(`doc-page-${newPage}`);
-    if (pageEl) {
-      isProgrammaticScrollRef.current = true;
+        if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 750);
 
-      const scale = (zoomLevel || 100) / 100;
-      const containerRect = container.getBoundingClientRect();
-      const pageRect = pageEl.getBoundingClientRect();
-      const relativeTop = (pageRect.top - containerRect.top) / scale;
-      const targetScrollTop = container.scrollTop + relativeTop - 20;
-
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: "smooth"
-      });
-
-      // Secondary scrollIntoView call
-      try {
-        pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch {
-        // fallback
+        pageEl.classList.add("ring-4", "ring-amber-500", "ring-offset-4", "transition-all", "duration-300");
+        setTimeout(() => {
+          pageEl.classList.remove("ring-4", "ring-amber-500", "ring-offset-4");
+        }, 2500);
+      } else {
+        const container = pageContainerRef.current;
+        if (container) {
+          if (!isContinuousScroll) {
+            container.scrollTo({ top: 0, behavior: "smooth" });
+          } else {
+            const estHeight = 720;
+            container.scrollTo({
+              top: Math.max(0, (newPage - 1) * estHeight),
+              behavior: "smooth"
+            });
+          }
+        }
       }
-
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-      scrollTimeoutRef.current = setTimeout(() => {
-        isProgrammaticScrollRef.current = false;
-      }, 750);
-
-      pageEl.classList.add("ring-4", "ring-amber-500", "ring-offset-4", "transition-all", "duration-300");
-      setTimeout(() => {
-        pageEl.classList.remove("ring-4", "ring-amber-500", "ring-offset-4");
-      }, 2500);
-    } else {
-      // Fallback: estimate position
-      const estHeight = 720;
-      container.scrollTo({
-        top: Math.max(0, (newPage - 1) * estHeight),
-        behavior: "smooth"
-      });
-    }
+    }, 20);
   };
 
   // Scroll listener for continuous scroll page sync
@@ -947,6 +942,9 @@ export const DocumentModalViewer: React.FC<Props> = ({
                           <img
                             src={sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])}
                             alt={`Slide ${pageNum}`}
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
                             className="w-full h-full object-contain pointer-events-none"
                             loading="lazy"
                           />

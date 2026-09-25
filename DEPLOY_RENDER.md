@@ -8,17 +8,22 @@ This project supports **two separate, dedicated websites** from the same GitHub 
 
 ## Method 1: Render Blueprints (Recommended - 1-Click)
 
-The repository includes a ready-to-deploy `render.yaml` blueprint.
+The repository includes a ready-to-deploy `render.yaml` blueprint with two linked services:
+1. `course-teacher-portal` (Teacher upload studio & presentation manager)
+2. `course-student-portal` (Student reader, quizzes, flashcards, AI Tutor)
 
+### Steps to Deploy Blueprint:
 1. Push your repository to **GitHub**.
 2. Go to your [Render Dashboard](https://dashboard.render.com).
 3. Click **New +** → **Blueprint**.
 4. Connect your GitHub repository.
-5. Render will automatically detect `render.yaml` and configure:
-   - `course-teacher-portal`
-   - `course-student-portal` (automatically linked to the Teacher service URL)
-6. Add your API keys (`OPENROUTER_API_KEY` and/or `GROQ_API_KEY`) in the environment variables prompt.
-7. Click **Apply**. Both websites will be built and deployed!
+5. Render detects `render.yaml` and sets up both:
+   - `course-teacher-portal` (starts on port `$PORT`, health check at `/api/health`)
+   - `course-student-portal` (automatically wired with `TEACHER_SERVICE_URL`)
+6. Optionally enter your API keys (`GEMINI_API_KEY`, `OPENROUTER_API_KEY`, or `GROQ_API_KEY`).
+7. Click **Apply**. Render will build and deploy both services!
+
+*Note for Render Free Tier: If your account has free tier service limits, you can also deploy either a single service or upgrade to the Starter plan.*
 
 ---
 

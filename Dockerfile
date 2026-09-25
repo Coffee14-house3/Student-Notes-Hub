@@ -33,4 +33,4 @@ ENV NODE_ENV=production
 EXPOSE 3000
 
 # Start server
-CMD ["node", "server.ts"]
+CMD ["npm", "start"]

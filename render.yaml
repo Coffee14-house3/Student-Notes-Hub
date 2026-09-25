@@ -1,18 +1,23 @@
 services:
-  # 1. Teacher Portal Service (Uploads, organizes, and publishes course notes)
+  # ============================================================================
+  # 1. Course Teacher Portal (Teacher Upload Studio & Slides Management)
+  # ============================================================================
   - type: web
     name: course-teacher-portal
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
-      - key: PORTAL_MODE
-        value: teacher
-      - key: VITE_PORTAL_MODE
-        value: teacher
       - key: NODE_ENV
         value: production
+      - key: PORTAL_MODE
+        value: teacher
+      - key: DATA_DIR
+        value: ./data
+      - key: GEMINI_API_KEY
+        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -23,29 +28,38 @@ services:
         sync: false
       - key: CHROMA_DATABASE
         sync: false
-      - key: DATA_DIR
-        value: ./data
 
-  # 2. Student Portal Service (Interactive notes reading, AI Smart Tutor, quizzes)
+  # ============================================================================
+  # 2. Course Student Portal (Notes Viewer, AI Study Tutor, Quizzes)
+  # ============================================================================
   - type: web
     name: course-student-portal
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
-      - key: PORTAL_MODE
-        value: student
-      - key: VITE_PORTAL_MODE
-        value: student
       - key: NODE_ENV
         value: production
-      - key: TEACHER_API_URL
+      - key: PORTAL_MODE
+        value: student
+      - key: DATA_DIR
+        value: ./data
+      - key: TEACHER_SERVICE_URL
         fromService:
           type: web
           name: course-teacher-portal
-          envVarKey: RENDER_EXTERNAL_URL
+          property: host
+      - key: GEMINI_API_KEY
+        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
       - key: GROQ_API_KEY
+        sync: false
+      - key: CHROMA_API_KEY
+        sync: false
+      - key: CHROMA_TENANT
+        sync: false
+      - key: CHROMA_DATABASE
         sync: false

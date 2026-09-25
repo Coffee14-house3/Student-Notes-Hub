@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
 import AdmZip from "adm-zip";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { notesData } from "./src/data/notesData";
@@ -358,9 +357,8 @@ async function callGroqChat(
 
 async function startServer() {
   const app = express();
-  // Support Render dynamic port assignment while staying strictly on port 3000 in AI Studio
-  const isRender = process.env.RENDER === "true" || !!process.env.RENDER_SERVICE_ID;
-  const PORT = isRender && process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  // Support Render / cloud dynamic port assignment ($PORT) with fallback to 3000
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json({ limit: "1024mb" }));
   app.use(express.urlencoded({ limit: "1024mb", extended: true }));
@@ -702,7 +700,10 @@ async function startServer() {
       return res.send(buf);
     }
 
-    const teacherUrl = (process.env.TEACHER_API_URL || process.env.TEACHER_SERVICE_URL || "").trim().replace(/\/$/, "");
+    let teacherUrl = (process.env.TEACHER_API_URL || process.env.TEACHER_SERVICE_URL || "").trim().replace(/\/$/, "");
+    if (teacherUrl && !teacherUrl.startsWith("http://") && !teacherUrl.startsWith("https://")) {
+      teacherUrl = `https://${teacherUrl}`;
+    }
     if (teacherUrl) {
       try {
         const remoteRes = await fetch(`${teacherUrl}/api/pdf/${req.params.id}`);
@@ -1113,7 +1114,90 @@ async function startServer() {
     }
   }
 
-  // Route to stream pre-rendered exact high-res slide image
+  function generateSlideSvg(title: string, subtitle: string, bullets: string[], pageNum: number, totalPages: number, docTitle: string): string {
+    const esc = (s: string) => String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+
+    const safeTitle = esc(title || `Slide ${pageNum}`);
+    const safeSubtitle = esc(subtitle || "LECTURE NOTES");
+    const safeDocTitle = esc(docTitle || "Course Notes Hub");
+
+    const bulletSvgLines = bullets.slice(0, 5).map((bullet, idx) => {
+      const y = 430 + idx * 105;
+      const safeBullet = esc(bullet);
+      return `
+        <g>
+          <circle cx="160" cy="${y - 9}" r="9" fill="#f59e0b" fill-opacity="0.9" />
+          <circle cx="160" cy="${y - 9}" r="16" fill="#f59e0b" fill-opacity="0.2" />
+          <text x="195" y="${y}" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="500" fill="#e2e8f0">${safeBullet}</text>
+        </g>
+      `;
+    }).join("");
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1120" />
+      <stop offset="40%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#fbbf24" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Deep Presentation Background -->
+  <rect width="1920" height="1080" fill="url(#bgGrad)" />
+
+  <!-- Subtle Ambient Glow Rings -->
+  <circle cx="1800" cy="120" r="450" fill="#f59e0b" fill-opacity="0.04" filter="blur(80px)" />
+  <circle cx="150" cy="950" r="380" fill="#3b82f6" fill-opacity="0.04" filter="blur(80px)" />
+
+  <!-- Slide Card Container -->
+  <rect x="70" y="50" width="1780" height="980" rx="28" fill="#131d31" fill-opacity="0.75" stroke="#334155" stroke-width="2" filter="url(#shadow)" />
+
+  <!-- Top Accent Bar -->
+  <rect x="70" y="50" width="1780" height="8" rx="4" fill="url(#accentGrad)" />
+
+  <!-- Header Section -->
+  <g transform="translate(140, 130)">
+    <!-- Subtitle Pill -->
+    <rect x="0" y="0" width="${Math.max(220, safeSubtitle.length * 15 + 40)}" height="44" rx="22" fill="#f59e0b" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.5" />
+    <text x="20" y="28" font-family="monospace, monospace" font-size="19" font-weight="700" fill="#fbbf24" letter-spacing="1.5">${safeSubtitle.toUpperCase()}</text>
+
+    <!-- Page Number Badge Right -->
+    <rect x="1460" y="0" width="180" height="44" rx="12" fill="#1e293b" stroke="#475569" stroke-width="1.5" />
+    <text x="1550" y="28" text-anchor="middle" font-family="monospace, monospace" font-size="19" font-weight="800" fill="#cbd5e1">SLIDE ${pageNum} / ${totalPages}</text>
+
+    <!-- Main Title -->
+    <text x="0" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#ffffff" letter-spacing="-0.5">${safeTitle}</text>
+    
+    <!-- Divider -->
+    <line x1="0" y1="145" x2="1640" y2="145" stroke="#334155" stroke-width="2" stroke-dasharray="8 8" />
+  </g>
+
+  <!-- Slide Body Content -->
+  ${bulletSvgLines}
+
+  <!-- Footer Bar -->
+  <g transform="translate(140, 960)">
+    <line x1="0" y1="0" x2="1640" y2="0" stroke="#1e293b" stroke-width="1.5" />
+    <text x="0" y="32" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#64748b">${safeDocTitle}</text>
+    <text x="1640" y="32" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="500" fill="#64748b">Course Notes Hub &amp; Smart AI Study Tutor</text>
+  </g>
+</svg>`;
+  }
+
+  // Route to stream pre-rendered exact high-res slide image or synthesized presentation slide
   app.get("/api/slide/:id/:page", async (req, res) => {
     const docId = req.params.id;
     const pageNum = parseInt(req.params.page, 10);
@@ -1134,7 +1218,52 @@ async function startServer() {
         return res.sendFile(filePath);
       }
     }
-    return res.status(404).json({ error: "Slide image not found" });
+
+    // Dynamic High-Fidelity Presentation SVG Generator:
+    // If exact pre-rendered image doesn't exist on disk (e.g. in minimal Render/cloud containers),
+    // dynamically synthesize a 16:9 high-definition vector presentation slide SVG so images never break!
+    try {
+      const doc = serverDocuments.find(d => d.id === docId || d.originalFileName === docId || (d.title && d.title.includes(docId)));
+      const sec = doc?.sections?.[pageNum - 1];
+      const totalPages = doc?.pageCount || doc?.sections?.length || 1;
+      const title = sec?.title || (doc ? `${doc.title} - Slide ${pageNum}` : `Slide ${pageNum}`);
+      const subtitle = sec?.subtitle || doc?.unit || doc?.subject || "LECTURE SLIDE";
+      const docTitle = doc?.title || "Course Notes Hub";
+
+      // Parse bullet points from contentMarkdown
+      const rawContent = sec?.contentMarkdown || sec?.content || "";
+      const bulletLines: string[] = [];
+      const lines = rawContent.split(/\r?\n/);
+      for (const line of lines) {
+        const trimmed = line.replace(/^[#*\-•\d.]+\s*/, "").trim();
+        if (trimmed && trimmed.length > 5 && !trimmed.startsWith("```") && !trimmed.startsWith("|")) {
+          bulletLines.push(trimmed.length > 105 ? trimmed.slice(0, 102) + "..." : trimmed);
+        }
+        if (bulletLines.length >= 5) break;
+      }
+
+      if (bulletLines.length === 0) {
+        bulletLines.push("Core concept overview and detailed lecture presentation points.");
+        bulletLines.push("Refer to the structured notes panel for complete reference material.");
+      }
+
+      const svg = generateSlideSvg(title, subtitle, bulletLines, pageNum, totalPages, docTitle);
+
+      // Cache SVG to docSlideDir if possible
+      try {
+        if (!fs.existsSync(docSlideDir)) {
+          fs.mkdirSync(docSlideDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(docSlideDir, `slide-${pageNum}.svg`), svg, "utf-8");
+      } catch {}
+
+      res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.status(200).send(svg);
+    } catch (svgErr) {
+      console.error("[SLIDE-SVG] Error generating fallback slide SVG:", svgErr);
+      return res.status(404).json({ error: "Slide image not found" });
+    }
   });
 
   // Document Parser API route: parses uploaded file (PDF, DOCX, PPTX, PPT, DOC, TXT, MD, Code, JSON) into structured NoteDocument
@@ -1628,14 +1757,21 @@ Output ONLY valid JSON in this format:
   });
 
   // Remote Teacher API URL (when Student service is deployed separately on Render)
-  const teacherApiUrl = (
+  let rawTeacherUrl = (
     process.env.TEACHER_API_URL || 
     process.env.TEACHER_SERVICE_URL || 
     ((process.env.PORTAL_MODE || "").toLowerCase().trim() === "student" ? "https://course-teacher-portal.onrender.com" : "")
   ).trim().replace(/\/$/, "");
+  if (rawTeacherUrl && !rawTeacherUrl.startsWith("http://") && !rawTeacherUrl.startsWith("https://")) {
+    rawTeacherUrl = `https://${rawTeacherUrl}`;
+  }
+  const teacherApiUrl = rawTeacherUrl;
 
   async function fetchFromTeacher(apiPath: string, options?: any) {
-    const targetUrl = options?.teacherUrl || teacherApiUrl;
+    let targetUrl = (options?.teacherUrl || teacherApiUrl || "").trim().replace(/\/$/, "");
+    if (targetUrl && !targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+      targetUrl = `https://${targetUrl}`;
+    }
     if (!targetUrl) return null;
     try {
       const res = await fetch(`${targetUrl}${apiPath}`, {
@@ -2777,16 +2913,36 @@ ${extractedContent}
 
   // Vite middleware for dev / static serving for prod
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn("[SERVER] Vite dev server middleware not available, falling back to static build:", (viteErr as any)?.message || viteErr);
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        const indexPath = path.join(distPath, "index.html");
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.send("Course Notes Hub is starting up. Please refresh shortly.");
+        }
+      });
+    }
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+      const indexPath = path.join(distPath, "index.html");
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.send("Course Notes Hub is starting up. Please refresh shortly.");
+      }
     });
   }
 
@@ -2811,6 +2967,14 @@ ${extractedContent}
   });
 }
 
+// Global crash resilience for production containers
+process.on("uncaughtException", (err) => {
+  console.error("[SERVER] Process uncaught exception (shielded):", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[SERVER] Process unhandled promise rejection (shielded):", reason);
+});
+
 startServer().catch((err) => {
-  console.error("Failed to start dev server:", err);
+  console.error("Failed to start server:", err);
 });

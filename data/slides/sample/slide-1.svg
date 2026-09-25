@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1120" />
+      <stop offset="40%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#fbbf24" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Deep Presentation Background -->
+  <rect width="1920" height="1080" fill="url(#bgGrad)" />
+
+  <!-- Subtle Ambient Glow Rings -->
+  <circle cx="1800" cy="120" r="450" fill="#f59e0b" fill-opacity="0.04" filter="blur(80px)" />
+  <circle cx="150" cy="950" r="380" fill="#3b82f6" fill-opacity="0.04" filter="blur(80px)" />
+
+  <!-- Slide Card Container -->
+  <rect x="70" y="50" width="1780" height="980" rx="28" fill="#131d31" fill-opacity="0.75" stroke="#334155" stroke-width="2" filter="url(#shadow)" />
+
+  <!-- Top Accent Bar -->
+  <rect x="70" y="50" width="1780" height="8" rx="4" fill="url(#accentGrad)" />
+
+  <!-- Header Section -->
+  <g transform="translate(140, 130)">
+    <!-- Subtitle Pill -->
+    <rect x="0" y="0" width="235" height="44" rx="22" fill="#f59e0b" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.5" />
+    <text x="20" y="28" font-family="monospace, monospace" font-size="19" font-weight="700" fill="#fbbf24" letter-spacing="1.5">LECTURE SLIDE</text>
+
+    <!-- Page Number Badge Right -->
+    <rect x="1460" y="0" width="180" height="44" rx="12" fill="#1e293b" stroke="#475569" stroke-width="1.5" />
+    <text x="1550" y="28" text-anchor="middle" font-family="monospace, monospace" font-size="19" font-weight="800" fill="#cbd5e1">SLIDE 1 / 1</text>
+
+    <!-- Main Title -->
+    <text x="0" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#ffffff" letter-spacing="-0.5">Slide 1</text>
+    
+    <!-- Divider -->
+    <line x1="0" y1="145" x2="1640" y2="145" stroke="#334155" stroke-width="2" stroke-dasharray="8 8" />
+  </g>
+
+  <!-- Slide Body Content -->
+  
+        <g>
+          <circle cx="160" cy="421" r="9" fill="#f59e0b" fill-opacity="0.9" />
+          <circle cx="160" cy="421" r="16" fill="#f59e0b" fill-opacity="0.2" />
+          <text x="195" y="430" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="500" fill="#e2e8f0">Core concept overview and detailed lecture presentation points.</text>
+        </g>
+      
+        <g>
+          <circle cx="160" cy="526" r="9" fill="#f59e0b" fill-opacity="0.9" />
+          <circle cx="160" cy="526" r="16" fill="#f59e0b" fill-opacity="0.2" />
+          <text x="195" y="535" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="500" fill="#e2e8f0">Refer to the structured notes panel for complete reference material.</text>
+        </g>
+      
+
+  <!-- Footer Bar -->
+  <g transform="translate(140, 960)">
+    <line x1="0" y1="0" x2="1640" y2="0" stroke="#1e293b" stroke-width="1.5" />
+    <text x="0" y="32" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#64748b">Course Notes Hub</text>
+    <text x="1640" y="32" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="500" fill="#64748b">Course Notes Hub &amp; Smart AI Study Tutor</text>
+  </g>
+</svg>

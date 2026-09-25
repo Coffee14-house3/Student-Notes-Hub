@@ -38,6 +38,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(pdfUrl || pdfDataUrl));
   const [error, setError] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"single" | "continuous">("continuous");
+  const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
 
   const singleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -54,11 +55,11 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   const sourceUrl = pdfUrl || pdfDataUrl;
 
   // Programmatic scroll to target page (for page buttons, key navigation, thumbnails)
-  const scrollToPage = (targetPage: number) => {
+  const scrollToPage = (targetPage: number, notifyParent = false) => {
     const valid = Math.min(Math.max(1, targetPage), numPages || 1);
     setActivePage(valid);
     prevCurrentPageRef.current = valid;
-    if (onPageChange) onPageChange(valid);
+    if (notifyParent && onPageChange) onPageChange(valid);
 
     const container = containerRef.current;
     if (!container) return;
@@ -68,9 +69,12 @@ export const PdfCanvasViewer: React.FC<Props> = ({
       return;
     }
 
-    const pageEl = container.querySelector(`#doc-page-${valid}`) as HTMLElement | null;
+    const pageEl = (container.querySelector(`#doc-page-${valid}`) || window.document.getElementById(`doc-page-${valid}`)) as HTMLElement | null;
     if (pageEl) {
       isProgrammaticScrollRef.current = true;
+      try {
+        pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {}
       const containerRect = container.getBoundingClientRect();
       const pageRect = pageEl.getBoundingClientRect();
       const targetScrollTop = container.scrollTop + (pageRect.top - containerRect.top) - 15;
@@ -80,17 +84,15 @@ export const PdfCanvasViewer: React.FC<Props> = ({
       });
       setTimeout(() => {
         isProgrammaticScrollRef.current = false;
-      }, 500);
+      }, 600);
     }
   };
 
   // Only scroll when currentPage prop changes from parent (e.g. user clicked a thumbnail or jump button)
   useEffect(() => {
-    if (currentPage && currentPage !== prevCurrentPageRef.current) {
-      prevCurrentPageRef.current = currentPage;
-      // Do not trigger programmatic scrolling if user is actively scrolling manually
-      if (currentPage !== activePage && !isUserScrollingRef.current) {
-        scrollToPage(currentPage);
+    if (currentPage && currentPage >= 1) {
+      if (currentPage !== activePage) {
+        scrollToPage(currentPage, false);
       }
     }
   }, [currentPage]);
@@ -465,11 +467,12 @@ export const PdfCanvasViewer: React.FC<Props> = ({
               <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full">
                 <canvas ref={singleCanvasRef} className="block max-w-full h-auto mx-auto" />
               </div>
-            ) : fallbackSlideImages?.[activePage - 1] ? (
+            ) : fallbackSlideImages?.[activePage - 1] && !failedImages.has(activePage) ? (
               <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full p-2">
                 <img
                   src={fallbackSlideImages[activePage - 1]}
                   alt={`Slide ${activePage}`}
+                  onError={() => setFailedImages(prev => new Set(prev).add(activePage))}
                   style={{ transform: `scale(${scale})`, transformOrigin: "top center" }}
                   className="max-w-full h-auto block mx-auto rounded"
                 />
@@ -531,9 +534,14 @@ export const PdfCanvasViewer: React.FC<Props> = ({
                 const slideImg = fallbackSlideImages?.[idx];
                 return (
                   <div key={pageNum} id={`doc-page-${pageNum}`} className="flex flex-col items-center scroll-mt-6 max-w-full">
-                    {slideImg ? (
+                    {slideImg && !failedImages.has(pageNum) ? (
                       <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 p-2 max-w-full">
-                        <img src={slideImg} alt={`Slide ${pageNum}`} className="max-w-full h-auto block mx-auto rounded" />
+                        <img 
+                          src={slideImg} 
+                          alt={`Slide ${pageNum}`} 
+                          onError={() => setFailedImages(prev => new Set(prev).add(pageNum))}
+                          className="max-w-full h-auto block mx-auto rounded" 
+                        />
                       </div>
                     ) : (
                       <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 p-4 max-w-full">
