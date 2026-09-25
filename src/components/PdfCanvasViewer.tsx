@@ -42,46 +42,60 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   const singleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef<{ [key: number]: HTMLCanvasElement | null }>({});
+  const renderedPagesRef = useRef<Map<number, number>>(new Map());
   const renderTasksRef = useRef<Map<number | string, any>>(new Map());
   const isProgrammaticScrollRef = useRef<boolean>(false);
+  const isUserScrollingRef = useRef<boolean>(false);
+  const scrollEndTimeoutRef = useRef<any>(null);
   const lastWheelTimeRef = useRef<number>(0);
+  const prevCurrentPageRef = useRef<number>(currentPage);
+  const loadedSourceRef = useRef<string | null>(null);
 
   const sourceUrl = pdfUrl || pdfDataUrl;
 
-  // Sync prop active page
-  useEffect(() => {
-    if (currentPage && currentPage !== activePage) {
-      setActivePage(currentPage);
-    }
-  }, [currentPage]);
+  // Programmatic scroll to target page (for page buttons, key navigation, thumbnails)
+  const scrollToPage = (targetPage: number) => {
+    const valid = Math.min(Math.max(1, targetPage), numPages || 1);
+    setActivePage(valid);
+    prevCurrentPageRef.current = valid;
+    if (onPageChange) onPageChange(valid);
 
-  // Scroll active page into view smoothly when changed externally or via page controls
-  useEffect(() => {
-    if (!activePage || isLoading) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    if (isProgrammaticScrollRef.current) {
-      // Already scrolling or handled by scroll listener
+    if (renderMode === "single") {
+      container.scrollTop = 0;
       return;
     }
 
-    if (renderMode === "single") {
-      if (containerRef.current) {
-        containerRef.current.scrollTop = 0;
-      }
-    } else {
-      const pageEl = window.document.getElementById(`doc-page-${activePage}`);
-      if (pageEl && containerRef.current) {
-        isProgrammaticScrollRef.current = true;
-        pageEl.scrollIntoView({ behavior: "smooth", block: "start" });
-        const timer = setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-        }, 800);
-        return () => clearTimeout(timer);
+    const pageEl = container.querySelector(`#doc-page-${valid}`) as HTMLElement | null;
+    if (pageEl) {
+      isProgrammaticScrollRef.current = true;
+      const containerRect = container.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+      const targetScrollTop = container.scrollTop + (pageRect.top - containerRect.top) - 15;
+      container.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "smooth"
+      });
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 500);
+    }
+  };
+
+  // Only scroll when currentPage prop changes from parent (e.g. user clicked a thumbnail or jump button)
+  useEffect(() => {
+    if (currentPage && currentPage !== prevCurrentPageRef.current) {
+      prevCurrentPageRef.current = currentPage;
+      // Do not trigger programmatic scrolling if user is actively scrolling manually
+      if (currentPage !== activePage && !isUserScrollingRef.current) {
+        scrollToPage(currentPage);
       }
     }
-  }, [activePage, isLoading, renderMode]);
+  }, [currentPage]);
 
-  // Load PDF Document
+  // Load PDF Document - only reload when sourceUrl truly changes, never on parent section re-renders
   useEffect(() => {
     if (!sourceUrl) {
       if (fallbackSections && fallbackSections.length > 0) {
@@ -95,9 +109,15 @@ export const PdfCanvasViewer: React.FC<Props> = ({
       return;
     }
 
+    // If already loaded for this exact sourceUrl, preserve existing document and scroll position
+    if (pdfDoc && loadedSourceRef.current === sourceUrl) {
+      return;
+    }
+
     let isMounted = true;
     setIsLoading(true);
     setError(null);
+    renderedPagesRef.current.clear();
 
     const loadingTask = pdfjsLib.getDocument({
       url: sourceUrl,
@@ -108,6 +128,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     loadingTask.promise
       .then((doc) => {
         if (!isMounted) return;
+        loadedSourceRef.current = sourceUrl;
         setPdfDoc(doc);
         setNumPages(doc.numPages);
         setIsLoading(false);
@@ -124,6 +145,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
             })
             .then(doc => {
               if (!isMounted) return;
+              loadedSourceRef.current = sourceUrl;
               setPdfDoc(doc);
               setNumPages(doc.numPages);
               setIsLoading(false);
@@ -153,7 +175,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     return () => {
       isMounted = false;
     };
-  }, [sourceUrl, fallbackSections]);
+  }, [sourceUrl]);
 
   const renderCanvasPage = async (pageNum: number, canvas: HTMLCanvasElement, targetScale: number, taskIdKey: number | string) => {
     if (!pdfDoc || !canvas) return;
@@ -203,7 +225,11 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     for (let p = 1; p <= numPages; p++) {
       const targetCanvas = pageRefs.current[p];
       if (targetCanvas) {
-        renderCanvasPage(p, targetCanvas, scale * 0.95, p);
+        const lastScale = renderedPagesRef.current.get(p);
+        if (lastScale !== scale) {
+          renderedPagesRef.current.set(p, scale);
+          renderCanvasPage(p, targetCanvas, scale * 0.95, p);
+        }
       }
     }
   }, [pdfDoc, scale, renderMode, numPages]);
@@ -231,14 +257,17 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activePage, numPages, renderMode]);
 
-  // Handle Wheel Navigation in Single Page mode
+  // Handle Wheel Navigation only in Single Page mode
   const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (renderMode !== "single" || numPages <= 1) return;
     const el = containerRef.current;
     if (!el) return;
 
+    // Require decisive wheel scroll to prevent trackpad inertial rubber-banding
+    if (Math.abs(e.deltaY) < 40) return;
+
     const now = Date.now();
-    if (now - lastWheelTimeRef.current < 450) {
+    if (now - lastWheelTimeRef.current < 550) {
       return;
     }
 
@@ -246,12 +275,12 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     const isAtBottom = !isScrollableY || (el.scrollHeight - el.scrollTop - el.clientHeight <= 15);
     const isAtTop = !isScrollableY || (el.scrollTop <= 15);
 
-    if (e.deltaY > 30 && isAtBottom) {
+    if (e.deltaY > 40 && isAtBottom) {
       if (activePage < numPages) {
         lastWheelTimeRef.current = now;
         handlePageChange(activePage + 1);
       }
-    } else if (e.deltaY < -30 && isAtTop) {
+    } else if (e.deltaY < -40 && isAtTop) {
       if (activePage > 1) {
         lastWheelTimeRef.current = now;
         handlePageChange(activePage - 1);
@@ -259,40 +288,49 @@ export const PdfCanvasViewer: React.FC<Props> = ({
     }
   };
 
-  // Track active page while scrolling in continuous mode
+  // Track active page while scrolling in continuous mode without jumping or resetting scroll
   const handleScroll = () => {
-    if (renderMode !== "continuous" || numPages <= 1 || isProgrammaticScrollRef.current) return;
+    if (isProgrammaticScrollRef.current) return;
+
+    // Flag that user is actively scrolling manually
+    isUserScrollingRef.current = true;
+    if (scrollEndTimeoutRef.current) clearTimeout(scrollEndTimeoutRef.current);
+    scrollEndTimeoutRef.current = setTimeout(() => {
+      isUserScrollingRef.current = false;
+    }, 600);
+
+    if (renderMode !== "continuous" || numPages <= 1) return;
     const container = containerRef.current;
     if (!container) return;
 
     const containerRect = container.getBoundingClientRect();
-    const containerCenter = containerRect.top + containerRect.height / 3;
+    const probeY = containerRect.top + Math.min(260, containerRect.height * 0.35);
 
-    let closestPage = 1;
-    let minDistance = Infinity;
+    // Use container.querySelectorAll to only inspect pages inside this viewer
+    const pageElements = container.querySelectorAll('[id^="doc-page-"]');
+    let currentInView = activePage;
 
-    for (let p = 1; p <= numPages; p++) {
-      const el = document.getElementById(`doc-page-${p}`);
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        const distance = Math.abs(rect.top - containerCenter);
-        if (distance < minDistance) {
-          minDistance = distance;
-          closestPage = p;
+    for (let i = 0; i < pageElements.length; i++) {
+      const el = pageElements[i] as HTMLElement;
+      const rect = el.getBoundingClientRect();
+      if (rect.top <= probeY && rect.bottom >= probeY) {
+        const pNum = parseInt(el.id.replace("doc-page-", ""), 10);
+        if (pNum) {
+          currentInView = pNum;
+          break;
         }
       }
     }
 
-    if (closestPage !== activePage) {
-      setActivePage(closestPage);
-      if (onPageChange) onPageChange(closestPage);
+    if (currentInView !== activePage) {
+      setActivePage(currentInView);
+      prevCurrentPageRef.current = currentInView;
+      if (onPageChange) onPageChange(currentInView);
     }
   };
 
   const handlePageChange = (newPage: number) => {
-    const valid = Math.min(Math.max(1, newPage), numPages);
-    setActivePage(valid);
-    if (onPageChange) onPageChange(valid);
+    scrollToPage(newPage);
   };
 
   const handleDownload = () => {
@@ -392,7 +430,6 @@ export const PdfCanvasViewer: React.FC<Props> = ({
         onScroll={handleScroll}
         tabIndex={0}
         className="flex-1 overflow-y-auto overflow-x-auto bg-[#e5e7eb] dark:bg-[#1f1f23] p-3 sm:p-6 md:p-8 flex flex-col items-center relative w-full h-full outline-none focus:outline-none"
-        style={{ scrollBehavior: "smooth" }}
       >
         {isLoading && (
           <div className="my-auto flex flex-col items-center justify-center space-y-3 p-6 sm:p-8 text-center bg-white/80 dark:bg-[#202025]/80 backdrop-blur-md rounded-2xl shadow-xl border border-slate-300 dark:border-slate-700 max-w-sm">
@@ -478,7 +515,8 @@ export const PdfCanvasViewer: React.FC<Props> = ({
                     <canvas
                       ref={(el) => {
                         pageRefs.current[pageNum] = el;
-                        if (el && pdfDoc) {
+                        if (el && pdfDoc && renderedPagesRef.current.get(pageNum) !== scale) {
+                          renderedPagesRef.current.set(pageNum, scale);
                           renderCanvasPage(pageNum, el, scale * 0.95, pageNum);
                         }
                       }}

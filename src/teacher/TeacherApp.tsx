@@ -120,8 +120,10 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
   const [bookmarks, setBookmarks] = useState<UserBookmark[]>([]);
   const [isAiChatOpen, setIsAiChatOpen] = useState<boolean>(false);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // File Upload Handler
+  // File Upload Handler with Auto-Scaling & Stream support for large files
   const handleUploadDocument = async (
     file: File, 
     metadata?: { 
@@ -135,44 +137,86 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
       isPublished?: boolean 
     }
   ) => {
-    // Read file as base64 data URL
-    const fileContent: string = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
+    setIsUploading(true);
+    setUploadError(null);
+    let newDoc: NoteDocument;
 
-    const payload = {
-      fileName: file.name,
-      fileType: file.type || undefined,
-      fileContent,
-      title: metadata?.title || file.name,
-      subject: metadata?.subject,
-      unit: metadata?.unit,
-      unitNumber: metadata?.unitNumber,
-      unitTitle: metadata?.unitTitle,
-      courseCode: metadata?.courseCode,
-      uploadedBy: metadata?.uploadedBy,
-      isPublished: metadata?.isPublished
-    };
+    try {
+      // For large files (> 15MB), stream binary directly to prevent browser base64 heap freeze
+      if (file.size > 15 * 1024 * 1024) {
+        const queryParams = new URLSearchParams({
+          fileName: file.name,
+          fileType: file.type || "application/octet-stream",
+          title: metadata?.title || file.name,
+          subject: metadata?.subject || "General Studies",
+          unit: metadata?.unit || "Unit 1",
+          unitNumber: String(metadata?.unitNumber || 1),
+          unitTitle: metadata?.unitTitle || "",
+          courseCode: metadata?.courseCode || "MCA-204",
+          uploadedBy: metadata?.uploadedBy || "Instructor",
+          isPublished: String(metadata?.isPublished !== false)
+        });
 
-    const res = await fetch("/api/parse-document", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
+        const res = await fetch(`/api/upload-stream?${queryParams.toString()}`, {
+          method: "POST",
+          body: file
+        });
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || "Failed to process document file");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to stream upload document file");
+        }
+
+        const data = await res.json();
+        newDoc = data.document || data;
+      } else {
+        // Read file as base64 data URL
+        const fileContent: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = (err) => reject(err);
+          reader.readAsDataURL(file);
+        });
+
+        const payload = {
+          fileName: file.name,
+          fileType: file.type || undefined,
+          fileContent,
+          title: metadata?.title || file.name,
+          subject: metadata?.subject,
+          unit: metadata?.unit,
+          unitNumber: metadata?.unitNumber,
+          unitTitle: metadata?.unitTitle,
+          courseCode: metadata?.courseCode,
+          uploadedBy: metadata?.uploadedBy,
+          isPublished: metadata?.isPublished
+        };
+
+        const res = await fetch("/api/parse-document", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to process document file");
+        }
+
+        const data = await res.json();
+        newDoc = data.document || data;
+      }
+
+      setDocuments(prev => [newDoc, ...prev]);
+    } catch (err: any) {
+      const msg = err?.message || "Failed to upload and process file";
+      setUploadError(msg);
+      throw err;
+    } finally {
+      setIsUploading(false);
     }
-
-    const data = await res.json();
-    const newDoc: NoteDocument = data.document || data;
-    setDocuments(prev => [newDoc, ...prev]);
   };
 
   // Rename / Edit Metadata Handler
@@ -398,6 +442,8 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             onTogglePublishDocument={handleTogglePublishDocument}
             onCreateAnnouncement={handleCreateAnnouncement}
             onDeleteAnnouncement={handleDeleteAnnouncement}
+            isUploading={isUploading}
+            uploadError={uploadError}
             onSwitchToStudent={() => {
               if (onSwitchPortal) {
                 onSwitchPortal("student");

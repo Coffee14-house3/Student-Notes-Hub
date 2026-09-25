@@ -1,0 +1,38 @@
+[
+  {
+    "id": "opt-1790256331234",
+    "timestamp": "2026-09-24T13:25:31.234Z",
+    "eventType": "STORAGE_OPTIMIZE",
+    "fromCapacity": "2.0 GB",
+    "toCapacity": "2.0 GB",
+    "fromTier": "Tier 2 (Course Scaled - 2.0 GB)",
+    "toTier": "Tier 2 (Course Scaled - 2.0 GB)",
+    "reason": "Ran autonomous storage compaction. Reclaimed 0 MB across 0 transient files.",
+    "usedBytes": 2693875,
+    "usedFormatted": "2.6 MB"
+  },
+  {
+    "id": "manual-scale-1790256326766",
+    "timestamp": "2026-09-24T13:25:26.765Z",
+    "eventType": "TIER_UPGRADE",
+    "fromCapacity": "500 MB",
+    "toCapacity": "2.0 GB",
+    "fromTier": "Tier 1 (Base Cloud - 500 MB)",
+    "toTier": "Tier 2 (Course Scaled - 2.0 GB)",
+    "reason": "Test scale trigger",
+    "usedBytes": 2693501,
+    "usedFormatted": "2.6 MB"
+  },
+  {
+    "id": "init-1790256317332",
+    "timestamp": "2026-09-24T13:25:17.332Z",
+    "eventType": "CAPACITY_EXPAND",
+    "fromCapacity": "0 MB",
+    "toCapacity": "500 MB",
+    "fromTier": "None",
+    "toTier": "Tier 1 (Base Cloud - 500 MB)",
+    "reason": "Auto-Scaling Storage Engine initialized. Elastic expansion active at 70% threshold.",
+    "usedBytes": 0,
+    "usedFormatted": "0 MB"
+  }
+]

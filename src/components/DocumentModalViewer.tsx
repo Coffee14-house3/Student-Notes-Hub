@@ -441,6 +441,20 @@ export const DocumentModalViewer: React.FC<Props> = ({
     (activeDoc?.slideImages && activeDoc.slideImages.length > 0)
   );
 
+  const effectiveSlideImages = useMemo(() => {
+    if (activeDoc?.slideImages && activeDoc.slideImages.length > 0) {
+      return activeDoc.slideImages;
+    }
+    if (activeDoc?.sections && activeDoc.sections.some(s => Boolean(s.slideImageUrl))) {
+      return activeDoc.sections.map((s, idx) => s.slideImageUrl || (activeDoc.id ? `/api/slide/${activeDoc.id}/${idx + 1}` : ""));
+    }
+    if (isPptxDoc && activeDoc?.id) {
+      const count = activeDoc.pageCount || activeDoc.sections?.length || 1;
+      return Array.from({ length: count }, (_, i) => `/api/slide/${activeDoc.id}/${i + 1}`);
+    }
+    return undefined;
+  }, [activeDoc, isPptxDoc]);
+
   const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
@@ -465,16 +479,15 @@ export const DocumentModalViewer: React.FC<Props> = ({
     }, 150);
   };
 
-  // Get active sections for the active document or combined view
-  const getActiveSections = (): NoteSection[] => {
+  // Get active sections for the active document or combined view - memoized to prevent infinite re-render loops in child viewers
+  const activeSections = useMemo((): NoteSection[] => {
     if (!activeDoc) return [];
     if (isAllFilesView || activeDoc.id.startsWith("all-") || activeDoc.id === "all-files" || activeDoc.id === "combined") {
       return activeDoc.sections || [];
     }
     return generateFullSectionsForDoc(activeDoc);
-  };
+  }, [activeDoc, isAllFilesView]);
 
-  const activeSections = getActiveSections();
   const totalPages = activeSections.length;
 
   // Sync currentPage with activeSectionId
@@ -491,6 +504,11 @@ export const DocumentModalViewer: React.FC<Props> = ({
     const sec = activeSections[newPage - 1];
     if (sec) {
       setActiveSectionId(sec.id);
+    }
+
+    // In PDF or PPTX presentation mode, PdfCanvasViewer manages continuous canvas navigation
+    if (viewMode === "pdf" || isPptxDoc) {
+      return;
     }
 
     const container = pageContainerRef.current;
@@ -546,7 +564,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
   // Scroll listener for continuous scroll page sync
   useEffect(() => {
-    if (!isContinuousScroll || !pageContainerRef.current) return;
+    if (viewMode === "pdf" || isPptxDoc || !isContinuousScroll || !pageContainerRef.current) return;
 
     const handleScroll = () => {
       if (isProgrammaticScrollRef.current) return;
@@ -574,7 +592,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
       containerEl.removeEventListener("scroll", handleScroll);
       if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
     };
-  }, [isContinuousScroll, activeSections, setActiveSectionId]);
+  }, [isContinuousScroll, activeSections, setActiveSectionId, viewMode, isPptxDoc]);
 
   const currentSection = activeSections[currentPage - 1] || activeSections[0];
 
@@ -924,6 +942,16 @@ export const DocumentModalViewer: React.FC<Props> = ({
                       >
                         {sec.title}
                       </div>
+                      {isPptxDoc && (sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])) && (
+                        <div className="w-full aspect-[16/9] rounded overflow-hidden bg-black/50 border border-slate-700/60 mt-1">
+                          <img
+                            src={sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])}
+                            alt={`Slide ${pageNum}`}
+                            className="w-full h-full object-contain pointer-events-none"
+                            loading="lazy"
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -950,10 +978,16 @@ export const DocumentModalViewer: React.FC<Props> = ({
                 pdfUrl={activeDoc.pdfUrl || (activeDoc.id ? `/api/pdf/${activeDoc.id}` : undefined)}
                 pdfDataUrl={activeDoc.pdfDataUrl}
                 currentPage={currentPage}
-                onPageChange={(p) => setCurrentPage(p)}
+                onPageChange={(p) => {
+                  setCurrentPage(p);
+                  const sec = activeSections[p - 1];
+                  if (sec) {
+                    setActiveSectionId(sec.id);
+                  }
+                }}
                 documentTitle={activeDoc.title}
                 fallbackSections={activeSections}
-                fallbackSlideImages={activeDoc.slideImages}
+                fallbackSlideImages={effectiveSlideImages}
                 shortTitle={activeDoc.shortTitle || activeDoc.title}
               />
             </div>
@@ -968,7 +1002,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                   onPageChange={(p) => setCurrentPage(p)}
                   documentTitle={activeDoc.title}
                   fallbackSections={activeSections}
-                  fallbackSlideImages={activeDoc.slideImages}
+                  fallbackSlideImages={effectiveSlideImages}
                   shortTitle={activeDoc.shortTitle || activeDoc.title}
                 />
               </div>
@@ -991,7 +1025,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                   {activeSections.map((sec, idx) => {
                     const pageNum = idx + 1;
                     const isBookmarked = bookmarks.some(b => b.sectionId === sec.id);
-                    const visualSlideImg = sec.slideImageUrl || (activeDoc?.slideImages && activeDoc.slideImages[idx]);
+                    const visualSlideImg = sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx]) || (activeDoc?.slideImages && activeDoc.slideImages[idx]) || (isPptxDoc && activeDoc?.id ? `/api/slide/${activeDoc.id}/${idx + 1}` : undefined);
                     return (
                       <PresentationSlideCard
                         key={sec.id}
@@ -1027,7 +1061,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
                     shortTitle={activeDoc ? (activeDoc.shortTitle || activeDoc.title) : "Slide Deck"}
                     isBookmarked={bookmarks.some(b => b.sectionId === currentSection.id)}
                     isDarkMode={slideDeckTheme === "dark"}
-                    slideImageUrl={currentSection.slideImageUrl || (activeDoc?.slideImages && activeDoc.slideImages[currentPage - 1])}
+                    slideImageUrl={currentSection.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[currentPage - 1]) || (activeDoc?.slideImages && activeDoc.slideImages[currentPage - 1]) || (isPptxDoc && activeDoc?.id ? `/api/slide/${activeDoc.id}/${currentPage}` : undefined)}
                     onToggleBookmark={() => {
                       if (onToggleBookmark) {
                         onToggleBookmark(currentSection, currentSection.title);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, X, Send, Bot, User, RotateCcw, Copy, Check } from "lucide-react";
+import { Sparkles, X, Send, Bot, User, RotateCcw, Copy, Check, Network, Maximize2, Minimize2 } from "lucide-react";
 
 import { NoteDocument } from "../types";
 
@@ -94,6 +94,185 @@ const MarkdownTableComponent: React.FC<{
   );
 };
 
+const DiagramCodeBlock: React.FC<{
+  rawCode: string;
+  lang?: string;
+}> = ({ rawCode, lang = "" }) => {
+  const [copied, setCopied] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
+
+  // Detect if this is an ASCII / network / architecture diagram
+  const isDiagram = (() => {
+    const l = (lang || "").toLowerCase();
+    if (["ascii", "diagram", "topology", "architecture", "net", "network", "chart", "map", "flow"].includes(l)) {
+      return true;
+    }
+    const lines = rawCode.trim().split("\n");
+    if (lines.length < 2) return false;
+    let matches = 0;
+    for (const line of lines) {
+      if (
+        /[+\|][\-=]{2,}/.test(line) ||
+        (/\|/.test(line) && (line.match(/\|/g) || []).length >= 2) ||
+        /[-=]{2,}>|<[-=]{2,}/.test(line) ||
+        /\[[^\]]+\]\s*[-=~>]*\s*\[[^\]]+\]/.test(line) ||
+        /^[+\-=|_#~*]{4,}$/.test(line.trim())
+      ) {
+        matches++;
+      }
+    }
+    return matches >= 2;
+  })();
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(rawCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <>
+      <div className="my-2.5 rounded-xl bg-[#0b0f17] text-slate-100 border border-slate-700/80 shadow-md overflow-hidden max-w-full">
+        <div className="px-3 py-1.5 bg-[#161f2e] border-b border-slate-700/80 flex items-center justify-between gap-2 select-none">
+          <div className="flex items-center gap-1.5 text-amber-400 font-mono font-bold tracking-wider text-[10px] uppercase">
+            {isDiagram ? (
+              <>
+                <Network className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Architecture Diagram</span>
+              </>
+            ) : (
+              <span>{lang || "Code"}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {isDiagram && (
+              <button
+                type="button"
+                onClick={() => setWrapLines(!wrapLines)}
+                className="px-2 py-0.5 rounded text-[10px] text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-sans"
+                title="Toggle line wrapping"
+              >
+                {wrapLines ? "Fixed Width" : "Wrap"}
+              </button>
+            )}
+            {isDiagram && (
+              <button
+                type="button"
+                onClick={() => setIsExpanded(true)}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-sans"
+                title="Open fullscreen view"
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span className="hidden sm:inline">Expand</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] text-slate-400 hover:text-white hover:bg-slate-800 transition-colors font-sans"
+              title="Copy diagram text"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-400" />
+                  <span className="text-emerald-400 font-medium">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Monospace ASCII Canvas with preserved columns */}
+        <div className="overflow-x-auto p-3 bg-[#0b0f17] custom-scrollbar max-w-full">
+          <pre
+            className={`font-mono text-[11px] sm:text-xs leading-snug text-slate-200 ${
+              wrapLines ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+            } select-text block`}
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+              letterSpacing: "0px",
+              tabSize: 2
+            }}
+          >
+            {rawCode}
+          </pre>
+        </div>
+
+        {isDiagram && (
+          <div className="px-3 py-1 bg-[#111827] border-t border-slate-800/80 text-[10px] text-slate-400 flex items-center justify-between">
+            <span className="italic flex items-center gap-1">
+              ↔ Scroll horizontally to view full diagram
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsExpanded(true)}
+              className="text-amber-400 hover:text-amber-300 font-medium transition-colors cursor-pointer"
+            >
+              Expand view ↗
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Fullscreen Expanded Diagram Modal */}
+      {isExpanded && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6"
+          onClick={() => setIsExpanded(false)}
+        >
+          <div
+            className="bg-[#0b0f17] border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 bg-[#161f2e] border-b border-slate-700/80 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-400 font-mono font-bold text-xs uppercase">
+                <Network className="w-4 h-4 text-amber-400" />
+                <span>Architecture & Network Diagram (Fullscreen)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-semibold transition-colors"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copied ? "Copied" : "Copy Diagram"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                  title="Close diagram"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4 sm:p-6 bg-[#070a10]">
+              <pre
+                className="whitespace-pre font-mono text-xs sm:text-sm leading-relaxed text-slate-100 select-text"
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+                  letterSpacing: "0px",
+                  tabSize: 2
+                }}
+              >
+                {rawCode}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 function parseMarkdownContent(lines: string[]) {
   const elements: Array<
     | { type: "space"; key: number }
@@ -102,6 +281,7 @@ function parseMarkdownContent(lines: string[]) {
     | { type: "bullet"; text: string; key: number }
     | { type: "numbered"; number: string; text: string; key: number }
     | { type: "table"; headers: string[]; alignments: ("left" | "center" | "right")[]; rows: string[][]; key: number }
+    | { type: "diagram"; text: string; key: number }
     | { type: "paragraph"; text: string; key: number }
   > = [];
 
@@ -121,6 +301,18 @@ function parseMarkdownContent(lines: string[]) {
     const cells = s.split("|").map(c => c.trim());
     if (cells.length === 0) return false;
     return cells.every(c => /^:?-+:?$/.test(c));
+  };
+
+  const isDiagramLine = (lineStr: string): boolean => {
+    const trimmed = lineStr.trim();
+    if (!trimmed) return false;
+    if (/[+\|][\-=]{2,}/.test(trimmed)) return true;
+    if ((trimmed.match(/\|/g) || []).length >= 2) return true;
+    if (/[-=]{2,}>|<[-=]{2,}/.test(trimmed)) return true;
+    if (/\[[^\]]+\]\s*[-=~>]*\s*\[[^\]]+\]/.test(trimmed)) return true;
+    if (/^\[\s*[A-Z0-9\s/_\-:]+\s*\]/.test(trimmed) && trimmed.includes("]")) return true;
+    if (/^[+\-=|_#~*]{4,}$/.test(trimmed)) return true;
+    return false;
   };
 
   let i = 0;
@@ -167,6 +359,29 @@ function parseMarkdownContent(lines: string[]) {
         key: startKey
       });
       continue;
+    }
+
+    // Detect plain ASCII Diagram (box borders +---+, |...|, --->, [... ...])
+    if (isDiagramLine(line) && i + 1 < lines.length && (isDiagramLine(lines[i + 1]) || !lines[i + 1].trim())) {
+      const diagramLines: string[] = [line];
+      const startKey = i;
+      i++;
+      while (i < lines.length) {
+        if (isDiagramLine(lines[i]) || (!lines[i].trim() && i + 1 < lines.length && isDiagramLine(lines[i + 1]))) {
+          diagramLines.push(lines[i]);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (diagramLines.filter(l => l.trim()).length >= 2) {
+        elements.push({
+          type: "diagram",
+          text: diagramLines.join("\n"),
+          key: startKey
+        });
+        continue;
+      }
     }
 
     if (!trimmed) {
@@ -254,10 +469,11 @@ const ChatMarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
           const rawCode = lang ? codeLines.slice(1).join("\n") : block.value.trim();
 
           return (
-            <div key={bIdx} className="my-2 rounded-xl bg-slate-900 text-slate-200 border border-slate-800 p-2.5 font-mono text-[11px] overflow-x-auto max-w-full">
-              {lang && <div className="text-[10px] text-amber-400 uppercase font-bold mb-1 border-b border-slate-800 pb-0.5">{lang}</div>}
-              <pre className="whitespace-pre-wrap break-words">{rawCode}</pre>
-            </div>
+            <DiagramCodeBlock
+              key={bIdx}
+              rawCode={rawCode}
+              lang={lang}
+            />
           );
         }
 
@@ -273,6 +489,16 @@ const ChatMarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
 
               if (elem.type === "hr") {
                 return <hr key={elem.key} className="my-2.5 border-slate-200 dark:border-slate-700/80" />;
+              }
+
+              if (elem.type === "diagram") {
+                return (
+                  <DiagramCodeBlock
+                    key={elem.key}
+                    rawCode={elem.text}
+                    lang="ascii"
+                  />
+                );
               }
 
               if (elem.type === "table") {
@@ -392,6 +618,7 @@ export const AiAssistantModal: React.FC<Props> = ({
   const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
+  const [isWide, setIsWide] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const handleCopyMessage = (text: string, idx: number) => {
@@ -470,7 +697,7 @@ export const AiAssistantModal: React.FC<Props> = ({
 
   const containerClasses = isEmbedded
     ? "w-full h-full flex flex-col bg-white dark:bg-slate-900 text-xs overflow-hidden"
-    : "fixed inset-y-0 right-0 z-50 w-full sm:w-[420px] max-w-full h-full max-h-[100dvh] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col text-xs transition-all";
+    : `fixed inset-y-0 right-0 z-50 w-full ${isWide ? "sm:w-[680px] lg:w-[760px]" : "sm:w-[460px]"} max-w-full h-full max-h-[100dvh] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col text-xs transition-all duration-200`;
 
   return (
     <>
@@ -497,8 +724,21 @@ export const AiAssistantModal: React.FC<Props> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {!isEmbedded && (
+              <button
+                type="button"
+                onClick={() => setIsWide(!isWide)}
+                className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-semibold transition-colors shrink-0 min-h-[36px]"
+                title={isWide ? "Standard drawer width" : "Widen panel to view diagrams comfortably"}
+              >
+                {isWide ? <Minimize2 className="w-3.5 h-3.5 text-amber-400" /> : <Maximize2 className="w-3.5 h-3.5 text-amber-400" />}
+                <span>{isWide ? "Normal" : "Wide View"}</span>
+              </button>
+            )}
+
             {messages.length > 1 && (
               <button
+                type="button"
                 onClick={handleClearChat}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-rose-950/60 hover:text-rose-400 text-slate-400 rounded-lg text-[11px] font-semibold transition-colors shrink-0 min-h-[36px]"
                 title="Reset Chat History"
@@ -509,6 +749,7 @@ export const AiAssistantModal: React.FC<Props> = ({
             )}
 
             <button 
+              type="button"
               onClick={onClose} 
               className="flex items-center gap-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-colors shrink-0 min-h-[36px]"
               title="Close AI Tutor Panel"
@@ -534,7 +775,7 @@ export const AiAssistantModal: React.FC<Props> = ({
                   </div>
                 )}
                 <div
-                  className={`p-3 sm:p-3.5 rounded-2xl max-w-[92%] sm:max-w-[88%] min-w-0 leading-relaxed text-xs relative break-words overflow-hidden ${
+                  className={`p-3 sm:p-3.5 rounded-2xl max-w-[95%] sm:max-w-[92%] min-w-0 leading-relaxed text-xs relative break-words overflow-hidden ${
                     m.role === "user"
                       ? "bg-amber-500 text-slate-950 font-medium rounded-tr-none shadow-xs"
                       : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 text-slate-800 dark:text-slate-200 rounded-tl-none shadow-xs"

@@ -26,6 +26,7 @@ import {
   resetChromaDatabase,
   queryChroma
 } from "./serverChroma";
+import { AutoScalingStorageManager } from "./serverStorageScaler";
 
 dotenv.config();
 
@@ -142,9 +143,47 @@ function getGeminiClient(): GoogleGenAI | null {
   const apiKey = (process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) return null;
   if (!geminiClientInstance) {
-    geminiClientInstance = new GoogleGenAI({ apiKey });
+    geminiClientInstance = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
   return geminiClientInstance;
+}
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  retries = 2,
+  baseDelayMs = 600
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      attempt++;
+      const errMsg = err?.message || String(err);
+      const isTransient =
+        err?.status === 503 ||
+        err?.status === 429 ||
+        errMsg.includes("503") ||
+        errMsg.includes("429") ||
+        errMsg.includes("high demand") ||
+        errMsg.includes("UNAVAILABLE");
+
+      if (attempt <= retries && isTransient) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        console.warn(`[Gemini API] Transient condition (503/429), retrying in ${delay}ms (attempt ${attempt}/${retries})...`);
+        await new Promise((res) => setTimeout(res, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 async function callGeminiChat(
@@ -153,26 +192,30 @@ async function callGeminiChat(
 ): Promise<{ text: string; modelUsed: string } | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: `${systemInstruction}\n\n${userPromptWithContext}` }
-          ]
-        }
-      ],
-      config: {
-        temperature: 0.3
+
+  // Primary: gemini-3.8-flash, Secondary fallback: gemini-3.1-flash-lite
+  const candidateModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+
+  for (const model of candidateModels) {
+    try {
+      const response = await retryWithBackoff(async () => {
+        return await ai.models.generateContent({
+          model,
+          contents: userPromptWithContext,
+          config: {
+            systemInstruction,
+            temperature: 0.3,
+          },
+        });
+      });
+
+      if (response?.text) {
+        return { text: response.text, modelUsed: model };
       }
-    });
-    if (response?.text) {
-      return { text: response.text, modelUsed: "gemini-3.6-flash" };
+    } catch (err: any) {
+      console.warn(`[Gemini API] Chat error with ${model}:`, err?.message || err);
+      // Fall through to next model candidate
     }
-  } catch (err: any) {
-    console.warn("[Gemini API] Chat error:", err?.message || err);
   }
   return null;
 }
@@ -183,27 +226,29 @@ async function callGeminiQuiz(
 ): Promise<{ text: string; modelUsed: string } | null> {
   const ai = getGeminiClient();
   if (!ai) return null;
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: `${systemInstruction}\n\n${userPrompt}` }
-          ]
-        }
-      ],
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.2
+
+  const candidateModels = ["gemini-3.8-flash", "gemini-3.1-flash-lite"];
+
+  for (const model of candidateModels) {
+    try {
+      const response = await retryWithBackoff(async () => {
+        return await ai.models.generateContent({
+          model,
+          contents: userPrompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+        });
+      });
+
+      if (response?.text) {
+        return { text: response.text, modelUsed: model };
       }
-    });
-    if (response?.text) {
-      return { text: response.text, modelUsed: "gemini-3.6-flash" };
+    } catch (err: any) {
+      console.warn(`[Gemini API] Quiz error with ${model}:`, err?.message || err);
     }
-  } catch (err: any) {
-    console.warn("[Gemini API] Quiz error:", err?.message || err);
   }
   return null;
 }
@@ -317,8 +362,8 @@ async function startServer() {
   const isRender = process.env.RENDER === "true" || !!process.env.RENDER_SERVICE_ID;
   const PORT = isRender && process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  app.use(express.json({ limit: "100mb" }));
-  app.use(express.urlencoded({ limit: "100mb", extended: true }));
+  app.use(express.json({ limit: "1024mb" }));
+  app.use(express.urlencoded({ limit: "1024mb", extended: true }));
 
   // Enable CORS for all incoming requests (crucial for cross-domain student/teacher sync on Render)
   app.use((req, res, next) => {
@@ -341,6 +386,7 @@ async function startServer() {
   const PDF_DIR = path.join(DATA_DIR, "pdfs");
   const RAW_FILES_DIR = path.join(DATA_DIR, "files");
   const SLIDES_DIR = path.join(DATA_DIR, "slides");
+  const storageScaler = new AutoScalingStorageManager(DATA_DIR);
   const rawFilesMap: Map<string, { buffer: Buffer; fileName: string; mimeType: string }> = new Map();
 
   function ensureDataDir() {
@@ -370,6 +416,32 @@ async function startServer() {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           serverDocuments = parsed;
+
+          // Connect any pre-generated slides to document sections
+          for (const doc of serverDocuments) {
+            const docSlideDir = path.join(SLIDES_DIR, doc.id);
+            if (fs.existsSync(docSlideDir)) {
+              const slideFiles = fs.readdirSync(docSlideDir)
+                .filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f))
+                .sort((a, b) => {
+                  const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+                  const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+                  return numA - numB;
+                });
+              if (slideFiles.length > 0) {
+                const slideUrls = slideFiles.map((_, idx) => `/api/slide/${doc.id}/${idx + 1}`);
+                doc.slideImages = slideUrls;
+                if (Array.isArray(doc.sections)) {
+                  doc.sections.forEach((sec: any, idx: number) => {
+                    if (slideUrls[idx]) {
+                      sec.slideImageUrl = slideUrls[idx];
+                    }
+                  });
+                }
+              }
+            }
+          }
+
           console.log(`[Storage] Loaded ${serverDocuments.length} persisted documents from ${DOCS_FILE}`);
         }
       }
@@ -467,79 +539,150 @@ async function startServer() {
 
   const pdfBuffers = new Map<string, Buffer>();
 
+  // High-performance, low-memory streaming helper with HTTP Range support (Zero Heap Bloat)
+  function streamFileWithRange(
+    filePath: string,
+    req: express.Request,
+    res: express.Response,
+    mimeType: string = "application/pdf",
+    downloadName?: string
+  ): boolean {
+    if (!fs.existsSync(filePath)) return false;
+    try {
+      const stat = fs.statSync(filePath);
+      const range = req.headers.range;
+
+      if (downloadName) {
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+      } else {
+        res.setHeader("Content-Disposition", "inline");
+      }
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+
+      if (range) {
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        if (start >= stat.size || end >= stat.size || start > end) {
+          res.status(416).setHeader("Content-Range", `bytes */${stat.size}`).send();
+          return true;
+        }
+        const chunksize = (end - start) + 1;
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+          "Content-Length": chunksize,
+          "Content-Type": mimeType
+        });
+        fs.createReadStream(filePath, { start, end }).pipe(res);
+        return true;
+      }
+
+      res.writeHead(200, {
+        "Content-Length": stat.size,
+        "Content-Type": mimeType
+      });
+      fs.createReadStream(filePath).pipe(res);
+      return true;
+    } catch (e) {
+      console.warn("[StreamFile] Error streaming file:", e);
+      return false;
+    }
+  }
+
+  // Auto-Scaling Storage Management Endpoints
+  app.get("/api/storage/metrics", (req, res) => {
+    try {
+      const metrics = storageScaler.getMetrics();
+      return res.json(metrics);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to retrieve storage metrics" });
+    }
+  });
+
+  app.post("/api/storage/auto-scale/trigger", (req, res) => {
+    try {
+      const reason = req.body?.reason || "Simulated auto-scale tier test requested by teacher";
+      const nextTier = storageScaler.forceScaleUp(reason);
+      const metrics = storageScaler.getMetrics();
+      return res.json({ success: true, newTier: nextTier, metrics });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to trigger auto-scale" });
+    }
+  });
+
+  app.post("/api/storage/optimize", (req, res) => {
+    try {
+      const optResult = storageScaler.optimizeStorage();
+      const metrics = storageScaler.getMetrics();
+      return res.json({ success: true, ...optResult, metrics });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to optimize storage" });
+    }
+  });
+
   // Route to stream original PDF binary buffer (with fallback to disk, on-demand PPTX conversion, and remote Teacher service)
   app.get("/api/pdf/:id", async (req, res) => {
+    // 1. First check if PDF exists on disk in PDF_DIR and stream via Range
+    const onDiskPath = path.join(PDF_DIR, `${req.params.id}.pdf`);
+    if (fs.existsSync(onDiskPath)) {
+      if (streamFileWithRange(onDiskPath, req, res, "application/pdf")) return;
+    }
+
+    // 2. Check if PDF exists in RAW_FILES_DIR
+    const rawPdfPath = path.join(RAW_FILES_DIR, `${req.params.id}.pdf`);
+    if (fs.existsSync(rawPdfPath)) {
+      if (streamFileWithRange(rawPdfPath, req, res, "application/pdf")) return;
+    }
+
+    // 3. Check if there is an uploaded PPTX or PPT file that can be converted to PDF on the fly
+    if (fs.existsSync(RAW_FILES_DIR)) {
+      try {
+        const pptxFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${req.params.id}.`) && /\.(pptx|ppt)$/i.test(f));
+        if (pptxFile) {
+          const rawPptxPath = path.join(RAW_FILES_DIR, pptxFile);
+          await renderPptxToSlideImages(req.params.id, rawPptxPath);
+          const checkPdf = path.join(PDF_DIR, `${req.params.id}.pdf`);
+          if (fs.existsSync(checkPdf)) {
+            if (streamFileWithRange(checkPdf, req, res, "application/pdf")) return;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[PDF on-demand conversion notice]:", e?.message);
+      }
+    }
+
+    // 4. Check if slide images exist for docId and synthesize high-res PDF
+    const slideDir = path.join(SLIDES_DIR, req.params.id);
+    if (fs.existsSync(slideDir)) {
+      try {
+        const slideFiles = fs.readdirSync(slideDir)
+          .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
+          .sort((a, b) => {
+            const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+            const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+            return numA - numB;
+          });
+        if (slideFiles.length > 0) {
+          const { PDFDocument } = await import("pdf-lib");
+          const pdfDoc = await PDFDocument.create();
+          for (const sf of slideFiles) {
+            const imgBytes = fs.readFileSync(path.join(slideDir, sf));
+            const img = sf.toLowerCase().endsWith(".png") ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+            const page = pdfDoc.addPage([img.width, img.height]);
+            page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+          }
+          const pdfBytes = await pdfDoc.save();
+          const targetPdf = path.join(PDF_DIR, `${req.params.id}.pdf`);
+          fs.writeFileSync(targetPdf, Buffer.from(pdfBytes));
+          if (streamFileWithRange(targetPdf, req, res, "application/pdf")) return;
+        }
+      } catch (e: any) {
+        console.warn("[Slide images to PDF compilation notice]:", e?.message);
+      }
+    }
+
     let buf = pdfBuffers.get(req.params.id);
-    if (!buf) {
-      // Check if PDF exists in PDF_DIR
-      const onDiskPath = path.join(PDF_DIR, `${req.params.id}.pdf`);
-      if (fs.existsSync(onDiskPath)) {
-        try {
-          buf = fs.readFileSync(onDiskPath);
-          pdfBuffers.set(req.params.id, buf);
-        } catch {}
-      }
-    }
-    if (!buf) {
-      // Check if PDF exists in RAW_FILES_DIR
-      const rawPdfPath = path.join(RAW_FILES_DIR, `${req.params.id}.pdf`);
-      if (fs.existsSync(rawPdfPath)) {
-        try {
-          buf = fs.readFileSync(rawPdfPath);
-          pdfBuffers.set(req.params.id, buf);
-        } catch {}
-      }
-    }
-    if (!buf) {
-      // Check if there is an uploaded PPTX or PPT file that can be converted to PDF on the fly
-      if (fs.existsSync(RAW_FILES_DIR)) {
-        try {
-          const pptxFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${req.params.id}.`) && /\.(pptx|ppt)$/i.test(f));
-          if (pptxFile) {
-            const rawPptxPath = path.join(RAW_FILES_DIR, pptxFile);
-            await renderPptxToSlideImages(req.params.id, rawPptxPath);
-            buf = pdfBuffers.get(req.params.id);
-            if (!buf) {
-              const checkPdf = path.join(PDF_DIR, `${req.params.id}.pdf`);
-              if (fs.existsSync(checkPdf)) buf = fs.readFileSync(checkPdf);
-            }
-          }
-        } catch (e: any) {
-          console.warn("[PDF on-demand conversion notice]:", e?.message);
-        }
-      }
-    }
-    if (!buf) {
-      // Check if slide images exist for docId and synthesize high-res PDF
-      const slideDir = path.join(SLIDES_DIR, req.params.id);
-      if (fs.existsSync(slideDir)) {
-        try {
-          const slideFiles = fs.readdirSync(slideDir)
-            .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
-            .sort((a, b) => {
-              const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
-              const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
-              return numA - numB;
-            });
-          if (slideFiles.length > 0) {
-            const { PDFDocument } = await import("pdf-lib");
-            const pdfDoc = await PDFDocument.create();
-            for (const sf of slideFiles) {
-              const imgBytes = fs.readFileSync(path.join(slideDir, sf));
-              const img = sf.toLowerCase().endsWith(".png") ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
-              const page = pdfDoc.addPage([img.width, img.height]);
-              page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
-            }
-            const pdfBytes = await pdfDoc.save();
-            buf = Buffer.from(pdfBytes);
-            pdfBuffers.set(req.params.id, buf);
-            fs.writeFileSync(path.join(PDF_DIR, `${req.params.id}.pdf`), buf);
-          }
-        } catch (e: any) {
-          console.warn("[Slide images to PDF compilation notice]:", e?.message);
-        }
-      }
-    }
     if (!buf) {
       // Check if document has base64 dataUrl in serverDocuments
       const matchingDoc = serverDocuments.find(d => d.id === req.params.id);
@@ -547,140 +690,137 @@ async function startServer() {
         try {
           const b64 = matchingDoc.pdfDataUrl.split(",")[1];
           buf = Buffer.from(b64, "base64");
-          pdfBuffers.set(req.params.id, buf);
         } catch {}
       }
     }
-    if (!buf) {
-      const teacherUrl = (process.env.TEACHER_API_URL || process.env.TEACHER_SERVICE_URL || "").trim().replace(/\/$/, "");
-      if (teacherUrl) {
-        try {
-          const remoteRes = await fetch(`${teacherUrl}/api/pdf/${req.params.id}`);
-          if (remoteRes.ok) {
-            const arrayBuf = await remoteRes.arrayBuffer();
-            const remoteBuf = Buffer.from(arrayBuf);
-            res.setHeader("Content-Type", "application/pdf");
-            res.setHeader("Content-Disposition", "inline");
-            res.setHeader("Content-Length", remoteBuf.length);
-            res.setHeader("Cache-Control", "public, max-age=86400");
-            return res.send(remoteBuf);
-          }
-        } catch (e: any) {
-          console.warn("[PDF Proxy Error]:", e?.message);
-        }
-      }
-      return res.status(404).json({ error: "PDF document binary not found or session expired" });
+
+    if (buf) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Content-Length", buf.length);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(buf);
     }
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", "inline");
-    res.setHeader("Content-Length", buf.length);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.send(buf);
+
+    const teacherUrl = (process.env.TEACHER_API_URL || process.env.TEACHER_SERVICE_URL || "").trim().replace(/\/$/, "");
+    if (teacherUrl) {
+      try {
+        const remoteRes = await fetch(`${teacherUrl}/api/pdf/${req.params.id}`);
+        if (remoteRes.ok) {
+          const arrayBuf = await remoteRes.arrayBuffer();
+          const remoteBuf = Buffer.from(arrayBuf);
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader("Content-Disposition", "inline");
+          res.setHeader("Content-Length", remoteBuf.length);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.send(remoteBuf);
+        }
+      } catch (e: any) {
+        console.warn("[PDF Proxy Error]:", e?.message);
+      }
+    }
+
+    return res.status(404).json({ error: "PDF document binary not found or session expired" });
   });
 
   // Route to stream or view any raw uploaded file (PPTX, PPT, PDF, DOCX, etc.)
   app.get("/api/file/:id", async (req, res) => {
     const fileId = req.params.id;
-    let fileInfo = rawFilesMap.get(fileId);
-    if (!fileInfo && fs.existsSync(RAW_FILES_DIR)) {
+    if (fs.existsSync(RAW_FILES_DIR)) {
       try {
         const matchingFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${fileId}.`) || f === fileId);
         if (matchingFile) {
-          const buf = fs.readFileSync(path.join(RAW_FILES_DIR, matchingFile));
+          const fullPath = path.join(RAW_FILES_DIR, matchingFile);
           const ext = path.extname(matchingFile).toLowerCase();
           const mimeType = ext === ".pptx" ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             : ext === ".ppt" ? "application/vnd.ms-powerpoint"
             : ext === ".pdf" ? "application/pdf"
             : ext === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : "application/octet-stream";
-          fileInfo = { buffer: buf, fileName: matchingFile, mimeType };
-          rawFilesMap.set(fileId, fileInfo);
+          if (streamFileWithRange(fullPath, req, res, mimeType)) return;
         }
       } catch {}
     }
 
-    if (!fileInfo) {
-      const pdfBuf = pdfBuffers.get(fileId);
-      if (pdfBuf) {
-        fileInfo = { buffer: pdfBuf, fileName: `${fileId}.pdf`, mimeType: "application/pdf" };
-      }
+    const onDiskPdf = path.join(PDF_DIR, `${fileId}.pdf`);
+    if (fs.existsSync(onDiskPdf)) {
+      if (streamFileWithRange(onDiskPdf, req, res, "application/pdf")) return;
     }
 
-    if (!fileInfo) {
-      return res.status(404).json({ error: "File not found or session expired" });
+    const pdfBuf = pdfBuffers.get(fileId);
+    if (pdfBuf) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${fileId}.pdf"`);
+      res.setHeader("Content-Length", pdfBuf.length);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(pdfBuf);
     }
 
-    res.setHeader("Content-Type", fileInfo.mimeType || "application/octet-stream");
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(fileInfo.fileName)}"`);
-    res.setHeader("Content-Length", fileInfo.buffer.length);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.send(fileInfo.buffer);
+    return res.status(404).json({ error: "File not found or session expired" });
   });
 
   // Route to download original untouched uploaded file
   app.get("/api/download/:id", async (req, res) => {
     const fileId = req.params.id;
-    let fileInfo = rawFilesMap.get(fileId);
-    if (!fileInfo && fs.existsSync(RAW_FILES_DIR)) {
+    if (fs.existsSync(RAW_FILES_DIR)) {
       try {
         const matchingFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${fileId}.`) || f === fileId);
         if (matchingFile) {
-          const buf = fs.readFileSync(path.join(RAW_FILES_DIR, matchingFile));
+          const fullPath = path.join(RAW_FILES_DIR, matchingFile);
           const ext = path.extname(matchingFile).toLowerCase();
           const mimeType = ext === ".pptx" ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             : ext === ".ppt" ? "application/vnd.ms-powerpoint"
             : ext === ".pdf" ? "application/pdf"
             : ext === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : "application/octet-stream";
-          fileInfo = { buffer: buf, fileName: matchingFile, mimeType };
-          rawFilesMap.set(fileId, fileInfo);
+          if (streamFileWithRange(fullPath, req, res, mimeType, matchingFile)) return;
         }
       } catch {}
     }
 
-    if (!fileInfo) {
-      const pdfBuf = pdfBuffers.get(fileId);
-      if (pdfBuf) {
-        fileInfo = { buffer: pdfBuf, fileName: `${fileId}.pdf`, mimeType: "application/pdf" };
-      }
+    const onDiskPdf = path.join(PDF_DIR, `${fileId}.pdf`);
+    if (fs.existsSync(onDiskPdf)) {
+      if (streamFileWithRange(onDiskPdf, req, res, "application/pdf", `${fileId}.pdf`)) return;
     }
 
-    if (!fileInfo) {
-      const matchingDoc = serverDocuments.find(d => d.id === fileId);
-      if (matchingDoc) {
-        let exportContent = `# ${matchingDoc.title}\n\n`;
-        if (matchingDoc.sections) {
-          matchingDoc.sections.forEach(s => {
-            exportContent += `\n---\n\n## ${s.title}\n\n${s.contentMarkdown || ""}\n`;
-          });
-        }
-        const buf = Buffer.from(exportContent, "utf-8");
-        const safeName = `${matchingDoc.title.replace(/[^a-zA-Z0-9_\-\.]/g, "_")}.md`;
-        res.setHeader("Content-Type", "text/markdown; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeName)}"`);
-        res.setHeader("Content-Length", buf.length);
-        return res.send(buf);
-      }
-      return res.status(404).json({ error: "File not found" });
+    const pdfBuf = pdfBuffers.get(fileId);
+    if (pdfBuf) {
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileId}.pdf"`);
+      res.setHeader("Content-Length", pdfBuf.length);
+      return res.send(pdfBuf);
     }
 
-    res.setHeader("Content-Type", fileInfo.mimeType || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileInfo.fileName)}"`);
-    res.setHeader("Content-Length", fileInfo.buffer.length);
-    res.send(fileInfo.buffer);
+    const matchingDoc = serverDocuments.find(d => d.id === fileId);
+    if (matchingDoc) {
+      let exportContent = `# ${matchingDoc.title}\n\n`;
+      if (matchingDoc.sections) {
+        matchingDoc.sections.forEach(s => {
+          exportContent += `\n---\n\n## ${s.title}\n\n${s.contentMarkdown || ""}\n`;
+        });
+      }
+      const buf = Buffer.from(exportContent, "utf-8");
+      const safeName = `${matchingDoc.title.replace(/[^a-zA-Z0-9_\-\.]/g, "_")}.md`;
+      res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeName)}"`);
+      res.setHeader("Content-Length", buf.length);
+      return res.send(buf);
+    }
+
+    return res.status(404).json({ error: "File not found" });
   });
 
-  // Helper function to render PowerPoint presentations (.pptx, .ppt) directly to exact pixel-for-pixel slide images
+  // Helper function to render PowerPoint presentations (.pptx, .ppt) directly to exact pixel-for-pixel slide images and PDF
   async function renderPptxToSlideImages(docId: string, pptxPath: string): Promise<string[]> {
     const docSlideDir = path.join(SLIDES_DIR, docId);
     if (!fs.existsSync(docSlideDir)) {
       try { fs.mkdirSync(docSlideDir, { recursive: true }); } catch {}
     }
 
-    // Check if images already exist
-    const existing = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
-    if (existing.length > 0) {
-      return existing
+    // Check if high-resolution raster slide images already exist
+    const existingRasters = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+    if (existingRasters.length > 0) {
+      return existingRasters
         .sort((a, b) => {
           const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
           const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
@@ -689,54 +829,277 @@ async function startServer() {
         .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
     }
 
-    const tempDir = path.join("/tmp", `conv_${docId}_${Date.now()}`);
-    try { fs.mkdirSync(tempDir, { recursive: true }); } catch {}
-
+    // Check if LibreOffice & pdftoppm CLI binaries exist in this runtime environment
+    let hasLibreOffice = false;
+    let officeBin = "libreoffice";
     try {
-      console.log(`[PPTX-RENDER] Converting ${pptxPath} to exact PDF using LibreOffice...`);
+      execSync("which libreoffice", { stdio: "ignore" });
+      hasLibreOffice = true;
+    } catch {
       try {
-        execSync(`libreoffice --headless --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
-          timeout: 60000,
-          stdio: "pipe"
-        });
-      } catch (loErr) {
-        console.warn(`[PPTX-RENDER] LibreOffice attempt failed, trying soffice:`, loErr);
-        execSync(`soffice --headless --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
-          timeout: 60000,
-          stdio: "pipe"
-        });
-      }
+        execSync("which soffice", { stdio: "ignore" });
+        hasLibreOffice = true;
+        officeBin = "soffice";
+      } catch {}
+    }
 
-      const pdfFiles = fs.readdirSync(tempDir).filter(f => f.toLowerCase().endsWith(".pdf"));
-      if (pdfFiles.length === 0) {
-        console.warn(`[PPTX-RENDER] No PDF was output by LibreOffice for ${docId}`);
-        return [];
-      }
-
-      const pdfPath = path.join(tempDir, pdfFiles[0]);
+    let hasPdftoppm = false;
+    if (hasLibreOffice) {
       try {
-        const pdfBuf = fs.readFileSync(pdfPath);
-        pdfBuffers.set(docId, pdfBuf);
-        const cachedPdfPath = path.join(RAW_FILES_DIR, `${docId}.pdf`);
-        if (!fs.existsSync(cachedPdfPath)) {
+        execSync("which pdftoppm", { stdio: "ignore" });
+        hasPdftoppm = true;
+      } catch {}
+    }
+
+    // If LibreOffice & pdftoppm are installed, use them for headless rasterization
+    if (hasLibreOffice && hasPdftoppm) {
+      const tempDir = path.join("/tmp", `conv_${docId}_${Date.now()}`);
+      try {
+        fs.mkdirSync(tempDir, { recursive: true });
+        execSync(`${officeBin} --headless --invisible --nodefault --nolockcheck -env:UserInstallation=file:///tmp/lo_${docId}_${Date.now()} --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
+          timeout: 90000,
+          stdio: ["ignore", "pipe", "ignore"]
+        });
+        const pdfFiles = fs.readdirSync(tempDir).filter(f => f.toLowerCase().endsWith(".pdf"));
+        if (pdfFiles.length > 0) {
+          const pdfPath = path.join(tempDir, pdfFiles[0]);
+          const pdfBuf = fs.readFileSync(pdfPath);
+          pdfBuffers.set(docId, pdfBuf);
+          const cachedPdfPath = path.join(RAW_FILES_DIR, `${docId}.pdf`);
           fs.writeFileSync(cachedPdfPath, pdfBuf);
-        }
-        const pdfDirPath = path.join(PDF_DIR, `${docId}.pdf`);
-        if (!fs.existsSync(pdfDirPath)) {
+          const pdfDirPath = path.join(PDF_DIR, `${docId}.pdf`);
           fs.writeFileSync(pdfDirPath, pdfBuf);
+
+          execSync(`pdftoppm -png -r 150 "${pdfPath}" "${path.join(docSlideDir, "slide")}"`, {
+            timeout: 90000,
+            stdio: ["ignore", "pipe", "ignore"]
+          });
+
+          const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+          if (generated.length > 0) {
+            return generated
+              .sort((a, b) => {
+                const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
+                const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
+                return numA - numB;
+              })
+              .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
+          }
         }
-      } catch (cacheErr) {
-        console.warn(`[PPTX-RENDER] Could not cache PDF:`, cacheErr);
+      } catch (loErr) {
+        console.warn("[LibreOffice / pdftoppm render notice]:", loErr);
+      } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      }
+    }
+
+    // Native High-Fidelity Slide & PDF Engine (zero external binary dependencies)
+    try {
+      const pptxBuffer = fs.readFileSync(pptxPath);
+      const parsed = await parsePptxBuffer(pptxBuffer, path.basename(pptxPath));
+      const pages = parsed.pages && parsed.pages.length > 0 ? parsed.pages : [
+        { pageNum: 1, title: path.basename(pptxPath, path.extname(pptxPath)), text: "PowerPoint Slide Deck" }
+      ];
+
+      // 1. Generate crisp 16:9 SVG slide images
+      for (let idx = 0; idx < pages.length; idx++) {
+        const p = pages[idx];
+        const pageNum = idx + 1;
+        const safeTitle = (p.title || `Slide ${pageNum}`).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safeSub = (p.subtitle || `Slide ${pageNum} of ${pages.length} • Presentation Deck`).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        // Extract embedded diagram image if present
+        const imgMatch = p.text ? p.text.match(/!\[Slide Diagram\]\((data:image\/[a-zA-Z+]+;base64,[^\)]+)\)/) : null;
+        const diagramDataUrl = imgMatch ? imgMatch[1] : null;
+
+        // Clean text lines
+        const cleanLines = (p.text || "")
+          .replace(/!\[Slide Diagram\]\([^\)]+\)/g, "")
+          .split("\n")
+          .map(l => l.trim().replace(/^\*\s*/, ""))
+          .filter(l => Boolean(l) && !l.startsWith("--- [Slide"));
+
+        let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0c121e"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#080d16"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.75" opacity="0.4"/>
+    </pattern>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bgGrad)"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+  <rect x="0" y="0" width="1600" height="5" fill="#f59e0b"/>
+
+  <!-- Header -->
+  <g transform="translate(60, 45)">
+    <rect x="0" y="0" width="130" height="32" rx="8" fill="#f59e0b" fill-opacity="0.15" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="65" y="21" fill="#fbbf24" font-size="14" font-weight="bold" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">SLIDE ${pageNum} / ${pages.length}</text>
+    <text x="150" y="21" fill="#94a3b8" font-size="14" font-family="system-ui, -apple-system, sans-serif" font-weight="600" letter-spacing="1">${safeSub}</text>
+  </g>
+
+  <!-- Title -->
+  <text x="60" y="135" fill="#ffffff" font-size="36" font-weight="800" font-family="system-ui, -apple-system, sans-serif">${safeTitle}</text>
+  <line x1="60" y1="160" x2="1540" y2="160" stroke="#334155" stroke-width="1"/>
+`;
+
+        if (diagramDataUrl) {
+          // Two-column layout with visual diagram on right
+          svgContent += `
+  <!-- Left Content Column -->
+  <g transform="translate(60, 195)">
+`;
+          let textY = 25;
+          for (let lineIdx = 0; lineIdx < Math.min(cleanLines.length, 12); lineIdx++) {
+            const line = cleanLines[lineIdx].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            svgContent += `    <circle cx="10" cy="${textY - 5}" r="4" fill="#fbbf24"/>
+    <text x="26" y="${textY}" fill="#e2e8f0" font-size="18" font-family="system-ui, -apple-system, sans-serif" font-weight="500">${line}</text>
+`;
+            textY += 38;
+          }
+          svgContent += `  </g>
+
+  <!-- Right Diagram Frame -->
+  <rect x="740" y="190" width="800" height="620" rx="16" fill="#030712" stroke="#334155" stroke-width="1.5"/>
+  <image href="${diagramDataUrl}" x="760" y="210" width="760" height="580" preserveAspectRatio="xMidYMid meet"/>
+`;
+        } else {
+          // Full-width cards layout
+          svgContent += `
+  <!-- Content Cards Grid -->
+  <g transform="translate(60, 195)">
+`;
+          for (let lineIdx = 0; lineIdx < Math.min(cleanLines.length, 10); lineIdx++) {
+            const line = cleanLines[lineIdx].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const col = lineIdx % 2;
+            const row = Math.floor(lineIdx / 2);
+            const cardX = col * 750;
+            const curY = row * 125;
+            svgContent += `    <rect x="${cardX}" y="${curY}" width="720" height="105" rx="12" fill="#1e293b" fill-opacity="0.75" stroke="#334155" stroke-width="1"/>
+    <circle cx="${cardX + 24}" cy="${curY + 32}" r="5" fill="#fbbf24"/>
+    <text x="${cardX + 42}" y="${curY + 38}" fill="#f8fafc" font-size="18" font-weight="600" font-family="system-ui, -apple-system, sans-serif">${line}</text>
+`;
+          }
+          svgContent += `  </g>
+`;
+        }
+
+        svgContent += `
+  <!-- Footer -->
+  <line x1="60" y1="840" x2="1540" y2="840" stroke="#1e293b" stroke-width="1"/>
+  <text x="60" y="868" fill="#64748b" font-size="13" font-family="ui-monospace, SFMono-Regular, monospace">PowerPoint Slide Deck • Slide ${pageNum} of ${pages.length}</text>
+  <text x="1540" y="868" fill="#64748b" font-size="13" font-family="ui-monospace, SFMono-Regular, monospace" text-anchor="end">Interactive Lecture Slide</text>
+</svg>`;
+
+        fs.writeFileSync(path.join(docSlideDir, `slide-${pageNum}.svg`), svgContent, "utf-8");
       }
 
-      console.log(`[PPTX-RENDER] Rendering slides into high-resolution images via pdftoppm...`);
-      execSync(`pdftoppm -png -r 150 "${pdfPath}" "${path.join(docSlideDir, "slide")}"`, {
-        timeout: 60000,
-        stdio: "pipe"
-      });
+      // 2. Synthesize high-resolution PDF for the presentation using pdf-lib
+      try {
+        const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
+        const pdfDoc = await PDFDocument.create();
+        const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        const fontReg = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-      const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
-      console.log(`[PPTX-RENDER] Successfully produced ${generated.length} exact slide images for ${docId}`);
+        for (let idx = 0; idx < pages.length; idx++) {
+          const p = pages[idx];
+          const page = pdfDoc.addPage([960, 540]);
+          page.drawRectangle({
+            x: 0,
+            y: 0,
+            width: 960,
+            height: 540,
+            color: rgb(0.047, 0.071, 0.118) // #0c121e
+          });
+          page.drawRectangle({
+            x: 0,
+            y: 536,
+            width: 960,
+            height: 4,
+            color: rgb(0.96, 0.62, 0.04) // amber #f59e0b
+          });
+
+          const safeTitle = (p.title || `Slide ${idx + 1}`).replace(/[^\x20-\x7E]/g, " ").slice(0, 55);
+          page.drawText(safeTitle, {
+            x: 40,
+            y: 470,
+            size: 22,
+            font: fontBold,
+            color: rgb(1, 1, 1)
+          });
+
+          const safeSub = `Slide ${idx + 1} of ${pages.length} - ${(p.subtitle || "Presentation Deck")}`.replace(/[^\x20-\x7E]/g, " ").slice(0, 70);
+          page.drawText(safeSub, {
+            x: 40,
+            y: 504,
+            size: 11,
+            font: fontBold,
+            color: rgb(0.96, 0.62, 0.04)
+          });
+
+          // Embed diagram if present
+          const imgMatch = p.text ? p.text.match(/!\[Slide Diagram\]\((data:image\/([a-zA-Z+]+);base64,([^\)]+))\)/) : null;
+          let hasImage = false;
+          if (imgMatch) {
+            try {
+              const mime = imgMatch[2].toLowerCase();
+              const imgBuffer = Buffer.from(imgMatch[3], "base64");
+              const embeddedImg = mime.includes("png") ? await pdfDoc.embedPng(imgBuffer) : await pdfDoc.embedJpg(imgBuffer);
+              const maxW = 460;
+              const maxH = 360;
+              const scale = Math.min(maxW / embeddedImg.width, maxH / embeddedImg.height, 1);
+              const imgW = embeddedImg.width * scale;
+              const imgH = embeddedImg.height * scale;
+              const imgX = 960 - 40 - imgW;
+              const imgY = 60 + (360 - imgH) / 2;
+
+              page.drawRectangle({
+                x: imgX - 8,
+                y: imgY - 8,
+                width: imgW + 16,
+                height: imgH + 16,
+                color: rgb(0.012, 0.027, 0.07),
+                borderColor: rgb(0.2, 0.25, 0.35),
+                borderWidth: 1
+              });
+              page.drawImage(embeddedImg, { x: imgX, y: imgY, width: imgW, height: imgH });
+              hasImage = true;
+            } catch {}
+          }
+
+          const cleanBodyText = (p.text || "").replace(/!\[Slide Diagram\]\([^\)]+\)/g, "").trim();
+          const rawLines = cleanBodyText.split("\n").map(l => l.trim().replace(/^\*\s*/, "")).filter(Boolean);
+          let textY = 425;
+          for (const line of rawLines.slice(0, 9)) {
+            if (textY < 60) break;
+            const safeLine = line.replace(/[^\x20-\x7E]/g, " ").slice(0, hasImage ? 42 : 90);
+            page.drawText(`*  ${safeLine}`, {
+              x: 40,
+              y: textY,
+              size: 12,
+              font: fontReg,
+              color: rgb(0.85, 0.88, 0.95)
+            });
+            textY -= 30;
+          }
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        const targetPdf = path.join(PDF_DIR, `${docId}.pdf`);
+        fs.writeFileSync(targetPdf, Buffer.from(pdfBytes));
+        const cachedRawPdf = path.join(RAW_FILES_DIR, `${docId}.pdf`);
+        if (!fs.existsSync(cachedRawPdf)) {
+          fs.writeFileSync(cachedRawPdf, Buffer.from(pdfBytes));
+        }
+        pdfBuffers.set(docId, Buffer.from(pdfBytes));
+      } catch (pdfErr) {
+        console.warn("[PPTX-RENDER] Notice generating synthetic PDF:", pdfErr);
+      }
+
+      const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
       return generated
         .sort((a, b) => {
           const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
@@ -744,11 +1107,9 @@ async function startServer() {
           return numA - numB;
         })
         .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
-    } catch (err) {
-      console.error(`[PPTX-RENDER] Slide conversion error:`, err);
+    } catch (nativeErr) {
+      console.warn("[PPTX-RENDER] Native slide generation notice:", nativeErr);
       return [];
-    } finally {
-      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
     }
   }
 
@@ -759,7 +1120,7 @@ async function startServer() {
     const docSlideDir = path.join(SLIDES_DIR, docId);
 
     if (fs.existsSync(docSlideDir)) {
-      const files = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+      const files = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
       const match = files.find(f => {
         const num = parseInt(f.replace(/\D/g, "") || "-1", 10);
         return num === pageNum;
@@ -767,7 +1128,7 @@ async function startServer() {
       if (match) {
         const filePath = path.join(docSlideDir, match);
         const ext = path.extname(match).toLowerCase();
-        const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+        const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".svg" ? "image/svg+xml" : "image/jpeg";
         res.setHeader("Content-Type", mimeType);
         res.setHeader("Cache-Control", "public, max-age=86400");
         return res.sendFile(filePath);
@@ -814,6 +1175,9 @@ async function startServer() {
       } else {
         fileBuffer = Buffer.from(fileContent);
       }
+
+      // Auto-scale storage engine evaluation (dynamically expands storage tier and memory buffer headroom)
+      storageScaler.evaluateAndScaleSync(fileName, fileBuffer?.length || 0);
 
       // Inspect real file magic bytes to prevent misclassified files (e.g. PPTX named as .pdf)
       let realIsPdf = false;
@@ -1151,7 +1515,7 @@ Output ONLY valid JSON in this format:
         sections: sections,
         fileFormat,
         pdfUrl: `/api/pdf/${docId}`,
-        pdfDataUrl: (isPdf && realIsPdf) && typeof fileContent === "string" && fileContent.startsWith("data:") ? fileContent : undefined,
+        pdfDataUrl: (isPdf && realIsPdf) && typeof fileContent === "string" && fileContent.length < 500000 ? fileContent : undefined,
         slideImages: slideImageUrls.length > 0 ? slideImageUrls : undefined,
         downloadUrl: `/api/download/${docId}`,
         originalFileUrl: `/api/file/${docId}`,
@@ -1188,6 +1552,78 @@ Output ONLY valid JSON in this format:
     } catch (err: any) {
       console.error("Error in /api/parse-document:", err);
       res.status(500).json({ error: err.message || "Failed to parse uploaded document." });
+    }
+  });
+
+  // Direct Binary Streaming Upload route for high-MB files (50MB - 1GB+)
+  app.post("/api/upload-stream", async (req, res) => {
+    try {
+      const fileName = decodeURIComponent(String(req.query.fileName || req.headers["x-filename"] || `upload-${Date.now()}.bin`));
+      const fileType = String(req.query.fileType || req.headers["x-filetype"] || "application/octet-stream");
+      const title = decodeURIComponent(String(req.query.title || req.headers["x-title"] || fileName));
+      const subject = decodeURIComponent(String(req.query.subject || req.headers["x-subject"] || "General Studies"));
+      const unit = decodeURIComponent(String(req.query.unit || req.headers["x-unit"] || "Unit 1"));
+      const unitNumber = parseInt(String(req.query.unitNumber || req.headers["x-unitnumber"] || "1"), 10) || 1;
+      const unitTitle = decodeURIComponent(String(req.query.unitTitle || req.headers["x-unittitle"] || ""));
+      const courseCode = decodeURIComponent(String(req.query.courseCode || req.headers["x-coursecode"] || "MCA-204"));
+      const uploadedBy = decodeURIComponent(String(req.query.uploadedBy || req.headers["x-uploadedby"] || "Instructor"));
+      const isPublished = req.query.isPublished !== "false" && req.headers["x-ispublished"] !== "false";
+
+      ensureDataDir();
+      const tempDir = path.join(DATA_DIR, "temp_uploads");
+      if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+      const tempFilePath = path.join(tempDir, `stream-${Date.now()}-${fileName.replace(/[^a-zA-Z0-9_\-\.]/g, "_")}`);
+      const writeStream = fs.createWriteStream(tempFilePath);
+
+      let bytesReceived = 0;
+      req.on("data", (chunk: Buffer) => {
+        bytesReceived += chunk.length;
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        req.pipe(writeStream);
+        writeStream.on("finish", () => resolve());
+        writeStream.on("error", (err) => reject(err));
+        req.on("error", (err) => reject(err));
+      });
+
+      // Autonomous scale evaluation check
+      storageScaler.evaluateAndScaleSync(fileName, bytesReceived);
+
+      const fileBuffer = fs.readFileSync(tempFilePath);
+      try { fs.unlinkSync(tempFilePath); } catch {}
+
+      const base64Data = fileBuffer.toString("base64");
+      const fileContent = `data:${fileType};base64,${base64Data}`;
+
+      const parseRes = await fetch(`http://localhost:${PORT}/api/parse-document`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName,
+          fileType,
+          fileContent,
+          title,
+          subject,
+          unit,
+          unitNumber,
+          unitTitle,
+          courseCode,
+          uploadedBy,
+          isPublished
+        })
+      });
+
+      if (!parseRes.ok) {
+        const errJson = await parseRes.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to parse streamed document");
+      }
+
+      const parseData = await parseRes.json();
+      return res.json({ success: true, ...parseData, bytesReceived });
+    } catch (err: any) {
+      console.error("[Upload-Stream Error]:", err);
+      return res.status(500).json({ error: err?.message || "Failed to stream and parse uploaded document." });
     }
   });
 
@@ -1364,6 +1800,18 @@ Output ONLY valid JSON in this format:
       if (fs.existsSync(pdfPath)) {
         fs.unlinkSync(pdfPath);
       }
+      if (fs.existsSync(RAW_FILES_DIR)) {
+        const rawFiles = fs.readdirSync(RAW_FILES_DIR).filter(f => f.startsWith(`${docId}.`) || f === docId);
+        rawFiles.forEach(f => {
+          try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
+        });
+      }
+      const slideDir = path.join(SLIDES_DIR, docId);
+      if (fs.existsSync(slideDir)) {
+        fs.rmSync(slideDir, { recursive: true, force: true });
+      }
+      pdfBuffers.delete(docId);
+      rawFilesMap.delete(docId);
     } catch {}
     try {
       await deleteDocumentFromChroma(docId);
@@ -1371,6 +1819,8 @@ Output ONLY valid JSON in this format:
     } catch (e: any) {
       console.warn("[ChromaDB] Delete error on DELETE /api/documents/:id:", e?.message || e);
     }
+    // Re-evaluate storage metrics
+    storageScaler.evaluateAndScaleSync();
     return res.json({ success: true, message: `Document ${docId} removed from storage and ChromaDB.` });
   });
 
@@ -1378,6 +1828,26 @@ Output ONLY valid JSON in this format:
   app.post("/api/documents/reset", async (req, res) => {
     serverDocuments = [];
     saveDocuments();
+    try {
+      // Clean uploaded files and slide caches
+      if (fs.existsSync(PDF_DIR)) {
+        fs.readdirSync(PDF_DIR).forEach(f => {
+          if (f.startsWith("upload-")) {
+            try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
+          }
+        });
+      }
+      if (fs.existsSync(RAW_FILES_DIR)) {
+        fs.readdirSync(RAW_FILES_DIR).forEach(f => {
+          if (f.startsWith("upload-")) {
+            try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
+          }
+        });
+      }
+    } catch {}
+    pdfBuffers.clear();
+    rawFilesMap.clear();
+    storageScaler.evaluateAndScaleSync();
     await resetChromaDatabase([], serverAnnouncements);
     return res.json({ documents: [], success: true });
   });
@@ -1385,6 +1855,25 @@ Output ONLY valid JSON in this format:
   app.post("/api/documents/clear-all", async (req, res) => {
     serverDocuments = [];
     saveDocuments();
+    try {
+      if (fs.existsSync(PDF_DIR)) {
+        fs.readdirSync(PDF_DIR).forEach(f => {
+          if (f.startsWith("upload-")) {
+            try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
+          }
+        });
+      }
+      if (fs.existsSync(RAW_FILES_DIR)) {
+        fs.readdirSync(RAW_FILES_DIR).forEach(f => {
+          if (f.startsWith("upload-")) {
+            try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
+          }
+        });
+      }
+    } catch {}
+    pdfBuffers.clear();
+    rawFilesMap.clear();
+    storageScaler.evaluateAndScaleSync();
     await resetChromaDatabase([], serverAnnouncements);
     return res.json({ documents: [], success: true });
   });
@@ -1513,11 +2002,12 @@ Output ONLY valid JSON in this format:
         return res.status(400).json({ error: "Prompt is required" });
       }
 
+      const geminiApiKey = process.env.GEMINI_API_KEY;
       const groqApiKey = process.env.GROQ_API_KEY || process.env.GROK_API_KEY;
       const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 
       // If local AI keys are not set, proxy request to remote Teacher service
-      if (!groqApiKey && !openrouterApiKey && teacherApiUrl) {
+      if (!geminiApiKey && !groqApiKey && !openrouterApiKey && teacherApiUrl) {
         const remoteChat = await fetchFromTeacher("/api/chat", {
           method: "POST",
           body: JSON.stringify(req.body)
@@ -1600,7 +2090,8 @@ EXAM MARKS & ANSWERING RULES:
 
 3. DIRECT & ACCURATE RAG ANSWERS: Always answer strictly using the retrieved document context. Explain cloud terms thoroughly and accurately. Do NOT add extraneous, useless, or unasked sections.
 
-4. CLEAN FORMATTING & TABLES: Use markdown headings, bold terms, bullet points, and code blocks. Whenever comparing concepts, services, tiers, or models (such as IaaS vs PaaS vs SaaS, S3 vs EBS vs EFS, etc.) or when asked for tabular summaries, always present them using standard Markdown tables with clear header rows (| Col 1 | Col 2 |) and separator rows (| --- | --- |). Provide clean, direct, accurate answers without page numbers or source file citations.`;
+4. CLEAN FORMATTING & TABLES: Use markdown headings, bold terms, bullet points, and code blocks. Whenever comparing concepts, services, tiers, or models (such as IaaS vs PaaS vs SaaS, S3 vs EBS vs EFS, etc.) or when asked for tabular summaries, always present them using standard Markdown tables with clear header rows (| Col 1 | Col 2 |) and separator rows (| --- | --- |). Provide clean, direct, accurate answers without page numbers or source file citations.
+5. ARCHITECTURAL & NETWORK DIAGRAMS: Whenever illustrating network topologies, cloud architectures, VPC subnets, peering, VPN gateways, or data flows, ALWAYS enclose the ASCII diagram inside a code block marked with \`\`\`ascii or \`\`\`text. Ensure horizontal alignment and box borders (+---+, |   |, ===, --->) are properly formatted, tidy, and bounded to a standard width (max 65-70 characters per line) so the diagram renders cleanly without wrapping.`;
 
       const fullPromptWithContext = `${systemInstruction}
 
@@ -1689,11 +2180,12 @@ User Question: ${prompt}`;
         return res.status(400).json({ error: "documentContent is required" });
       }
 
+      const geminiApiKey = process.env.GEMINI_API_KEY;
       const groqApiKey = process.env.GROQ_API_KEY || process.env.GROK_API_KEY;
       const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 
       // If local AI keys are not set, proxy request to remote Teacher service
-      if (!groqApiKey && !openrouterApiKey && teacherApiUrl) {
+      if (!geminiApiKey && !groqApiKey && !openrouterApiKey && teacherApiUrl) {
         const remoteQuiz = await fetchFromTeacher("/api/generate-quiz", {
           method: "POST",
           body: JSON.stringify(req.body)

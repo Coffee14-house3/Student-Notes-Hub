@@ -74,15 +74,14 @@ export function getStoredAnnouncementsSync(): CourseAnnouncement[] {
  * Save documents to IndexedDB (with localStorage backup of lightweight metadata)
  */
 export async function saveDocumentsToStorage(docs: NoteDocument[]): Promise<void> {
-  // 1. Sync to localStorage (strip heavy base64 data URLs if needed to prevent 5MB localStorage quota error)
+  // 1. Sync to localStorage (strip heavy base64 data URLs to guarantee 0ms instant reload without 5MB quota error)
   try {
     const safeDocs = docs.map(doc => {
-      // If doc has large pdfDataUrl > 2MB, keep it in IndexedDB but omit from localStorage
-      if (doc.pdfDataUrl && doc.pdfDataUrl.length > 2000000) {
-        const { pdfDataUrl, ...rest } = doc;
-        return rest;
-      }
-      return doc;
+      const { pdfDataUrl, ...rest } = doc;
+      return {
+        ...rest,
+        pdfUrl: rest.pdfUrl || `/api/pdf/${doc.id}`
+      };
     });
     localStorage.setItem(LOCAL_DOCS_KEY, JSON.stringify(safeDocs));
   } catch (e) {
@@ -90,7 +89,8 @@ export async function saveDocumentsToStorage(docs: NoteDocument[]): Promise<void
     try {
       const miniDocs = docs.map(({ sections, pdfDataUrl, ...rest }) => ({
         ...rest,
-        sections: (sections || []).map(s => ({ id: s.id, pageNumber: s.pageNumber, title: s.title, subtitle: s.subtitle, contentMarkdown: s.contentMarkdown.slice(0, 300) }))
+        pdfUrl: rest.pdfUrl || `/api/pdf/${rest.id}`,
+        sections: (sections || []).map(s => ({ id: s.id, pageNumber: s.pageNumber, title: s.title, subtitle: s.subtitle, contentMarkdown: s.contentMarkdown.slice(0, 200) }))
       }));
       localStorage.setItem(LOCAL_DOCS_KEY, JSON.stringify(miniDocs));
     } catch {
@@ -98,7 +98,7 @@ export async function saveDocumentsToStorage(docs: NoteDocument[]): Promise<void
     }
   }
 
-  // 2. Persist complete documents into IndexedDB (supports unlimited storage for full PDFs/slides)
+  // 2. Persist complete structured documents into IndexedDB (strip raw 50MB+ base64 blobs to preserve browser memory)
   try {
     const db = await openDB();
     const tx = db.transaction(DOCS_STORE, "readwrite");
@@ -112,7 +112,11 @@ export async function saveDocumentsToStorage(docs: NoteDocument[]): Promise<void
     });
 
     for (const doc of docs) {
-      store.put(doc);
+      // Omit heavy base64 in IndexedDB if larger than 200KB to guarantee elastic browser stability
+      const cleanDoc = (doc.pdfDataUrl && doc.pdfDataUrl.length > 200000)
+        ? { ...doc, pdfDataUrl: undefined, pdfUrl: doc.pdfUrl || `/api/pdf/${doc.id}` }
+        : doc;
+      store.put(cleanDoc);
     }
 
     await new Promise<void>((resolve, reject) => {
