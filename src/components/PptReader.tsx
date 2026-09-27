@@ -449,22 +449,50 @@ export const PptReader: React.FC<PptReaderProps> = ({
             {Array.from({ length: totalSlides }, (_, idx) => {
               const slideNum = idx + 1;
               const slideImg = doc.slideImages?.[idx] || `/api/slide/${doc.id}/${slideNum}`;
+              const slideSec = sections[idx] || { title: `Slide ${slideNum}`, contentMarkdown: doc.description || "AWS Cloud Architecture and Module Specifications." };
+              const hasFailed = failedImages.has(slideNum);
               return (
                 <div
                   key={slideNum}
                   id={`ppt-slide-${slideNum}`}
-                  className="w-full aspect-[16/9] transition-transform duration-150 ease-out flex items-center justify-center relative shadow-2xl rounded-2xl bg-white border border-slate-700/40 shrink-0"
+                  className="w-full aspect-[16/9] transition-transform duration-150 ease-out flex items-center justify-center relative shadow-2xl rounded-2xl bg-[#0f1117] text-slate-100 border border-slate-700/40 shrink-0 overflow-hidden"
                   style={{
                     transform: `scale(${zoom / 100})`,
                     transformOrigin: "center center",
                   }}
                 >
-                  <img
-                    src={slideImg}
-                    alt={`Slide ${slideNum}`}
-                    className="w-full h-full object-contain select-none bg-white rounded-2xl"
-                    loading={slideNum <= 3 ? "eager" : "lazy"}
-                  />
+                  {!hasFailed ? (
+                    <img
+                      src={slideImg}
+                      alt={`Slide ${slideNum}`}
+                      className="w-full h-full object-contain select-none bg-[#0f1117] rounded-2xl"
+                      loading={slideNum <= 3 ? "eager" : "lazy"}
+                      onError={() => setFailedImages((prev) => new Set(prev).add(slideNum))}
+                    />
+                  ) : (
+                    <div className="w-full h-full p-8 sm:p-12 flex flex-col justify-between bg-gradient-to-br from-slate-900 via-[#151821] to-[#0f1117] text-slate-100 rounded-2xl select-text overflow-y-auto">
+                      <div className="space-y-3">
+                        <div className="text-xs font-mono font-bold text-amber-400 uppercase tracking-widest">
+                          {doc.shortTitle || doc.title} • Slide {slideNum} of {totalSlides}
+                        </div>
+                        <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                          {slideSec.title || `Slide ${slideNum}`}
+                        </h2>
+                        {slideSec.subtitle && (
+                          <p className="text-xs sm:text-sm text-slate-300 font-medium">
+                            {slideSec.subtitle}
+                          </p>
+                        )}
+                      </div>
+                      <div className="my-4 text-xs sm:text-sm text-slate-200 leading-relaxed font-sans border-t border-slate-800/80 pt-4">
+                        <PaperMarkdownRenderer content={slideSec.contentMarkdown || slideSec.speakerNotes || "AWS Cloud Architecture and Module Specifications."} />
+                      </div>
+                      <div className="text-[10px] text-slate-500 flex items-center justify-between border-t border-slate-800 pt-3">
+                        <span>{doc.unit || "AWS Cloud Practitioner"}</span>
+                        <span className="font-mono">Page {slideNum}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

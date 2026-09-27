@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: course-notes-hub
+    name: course-teacher-portal
     env: node
     region: oregon
     plan: free
@@ -9,5 +9,18 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
+      - key: PORTAL_MODE
+        value: teacher
+
+  - type: web
+    name: course-student-portal
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORTAL_MODE
+        value: student
