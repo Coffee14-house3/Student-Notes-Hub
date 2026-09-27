@@ -1252,6 +1252,21 @@ async function startServer() {
       }
     }
 
+    // 3. Fallback proxy to Teacher portal backend if running on student portal
+    try {
+      const teacherSlideUrl = `https://course-teacher-portal.onrender.com/api/slide/${docId}/${pageNum}`;
+      const teacherRes = await fetch(teacherSlideUrl);
+      if (teacherRes.ok) {
+        const buffer = await teacherRes.arrayBuffer();
+        const contentType = teacherRes.headers.get("content-type") || "image/svg+xml";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.send(Buffer.from(buffer));
+      }
+    } catch {
+      // ignore
+    }
+
     // If exact pre-rendered image doesn't exist on disk, return 404 so PptReader seamlessly falls back to the official Office / Google Docs viewer iframe
     return res.status(404).json({ error: "Slide image not found" });
   });

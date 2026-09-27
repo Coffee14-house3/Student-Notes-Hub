@@ -212,8 +212,21 @@ export async function syncDocumentsWithServer(
   // 1. For Students: The teacher's server is the absolute ground truth.
   if (role === "student") {
     if (Array.isArray(serverDocs)) {
-      // Overwrite student local storage with the exact published list from the server
-      const publishedOnly = serverDocs.filter(d => d.isPublished !== false);
+      const teacherBase = "https://course-teacher-portal.onrender.com";
+      const updateUrl = (u?: string) => {
+        if (!u) return u;
+        if (u.startsWith("/api/")) return `${teacherBase}${u}`;
+        return u;
+      };
+      const publishedOnly = serverDocs.filter(d => d.isPublished !== false).map(doc => ({
+        ...doc,
+        slideImages: doc.slideImages?.map(updateUrl),
+        pdfUrl: updateUrl(doc.pdfUrl),
+        sections: doc.sections?.map(sec => ({
+          ...sec,
+          slideImageUrl: updateUrl(sec.slideImageUrl)
+        }))
+      }));
       await saveDocumentsToStorage(publishedOnly);
       return publishedOnly;
     }
