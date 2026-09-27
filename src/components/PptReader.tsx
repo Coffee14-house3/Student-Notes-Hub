@@ -67,12 +67,30 @@ export const PptReader: React.FC<PptReaderProps> = ({
     }
   }, [currentSlide, showThumbnails]);
 
+  const scrollToSlide = (slideNum: number) => {
+    setCurrentSlide(slideNum);
+    const el = document.getElementById(`ppt-slide-${slideNum}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
   const goToPrevSlide = useCallback(() => {
-    setCurrentSlide((prev) => Math.max(1, prev - 1));
+    setCurrentSlide((prev) => {
+      const next = Math.max(1, prev - 1);
+      const el = document.getElementById(`ppt-slide-${next}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return next;
+    });
   }, []);
 
   const goToNextSlide = useCallback(() => {
-    setCurrentSlide((prev) => Math.min(totalSlides, prev + 1));
+    setCurrentSlide((prev) => {
+      const next = Math.min(totalSlides, prev + 1);
+      const el = document.getElementById(`ppt-slide-${next}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return next;
+    });
   }, [totalSlides]);
 
   // Keyboard navigation for PPT Reader (Arrow keys, Space, PageUp/Down, Fullscreen F/F5, Escape)
@@ -358,7 +376,7 @@ export const PptReader: React.FC<PptReaderProps> = ({
                   key={slideNum}
                   ref={isActive ? activeThumbnailRef : undefined}
                   type="button"
-                  onClick={() => setCurrentSlide(slideNum)}
+                  onClick={() => scrollToSlide(slideNum)}
                   className={`w-full group text-left rounded-xl p-1.5 transition-all cursor-pointer flex flex-col gap-1 relative ${
                     isActive
                       ? "bg-amber-500/15 border-2 border-amber-500 shadow-md ring-2 ring-amber-500/20"
