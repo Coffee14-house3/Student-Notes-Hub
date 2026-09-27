@@ -26,6 +26,7 @@ import {
   queryChroma
 } from "./serverChroma";
 import { AutoScalingStorageManager } from "./serverStorageScaler";
+import { convertPptxToSlides } from "./server/converter.js";
 
 dotenv.config();
 
@@ -725,7 +726,7 @@ async function startServer() {
   });
 
   // Route to stream or view any raw uploaded file (PPTX, PPT, PDF, DOCX, etc.)
-  app.get("/api/file/:id", async (req, res) => {
+  app.get(["/api/file/:id", "/api/file/:id/:filename"], async (req, res) => {
     const fileId = req.params.id;
     if (fs.existsSync(RAW_FILES_DIR)) {
       try {
@@ -813,13 +814,21 @@ async function startServer() {
 
   // Helper function to render PowerPoint presentations (.pptx, .ppt) directly to exact pixel-for-pixel slide images and PDF
   async function renderPptxToSlideImages(docId: string, pptxPath: string): Promise<string[]> {
+    try {
+      const mapping = await convertPptxToSlides(docId, pptxPath);
+      const urls = Object.values(mapping) as string[];
+      if (urls.length > 0) return urls;
+    } catch (e) {
+      console.warn("[Converter notice]:", e);
+    }
+
     const docSlideDir = path.join(SLIDES_DIR, docId);
     if (!fs.existsSync(docSlideDir)) {
       try { fs.mkdirSync(docSlideDir, { recursive: true }); } catch {}
     }
 
     // Check if high-resolution raster slide images already exist
-    const existingRasters = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
+    const existingRasters = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
     if (existingRasters.length > 0) {
       return existingRasters
         .sort((a, b) => {
@@ -830,68 +839,56 @@ async function startServer() {
         .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
     }
 
-    // Check if LibreOffice & pdftoppm CLI binaries exist in this runtime environment
-    let hasLibreOffice = false;
-    let officeBin = "libreoffice";
-    try {
-      execSync("which libreoffice", { stdio: "ignore" });
-      hasLibreOffice = true;
-    } catch {
-      try {
-        execSync("which soffice", { stdio: "ignore" });
-        hasLibreOffice = true;
-        officeBin = "soffice";
-      } catch {}
-    }
+    // Check if an existing PDF is available to render exact slides with Ghostscript
+    const existingPdf = [
+      path.join(PDF_DIR, `${docId}.pdf`),
+      path.join(RAW_FILES_DIR, `${docId}.pdf`),
+      pptxPath.toLowerCase().endsWith(".pdf") ? pptxPath : null
+    ].find(p => p && fs.existsSync(p));
 
-    let hasPdftoppm = false;
-    if (hasLibreOffice) {
+    if (existingPdf) {
       try {
-        execSync("which pdftoppm", { stdio: "ignore" });
-        hasPdftoppm = true;
-      } catch {}
-    }
-
-    // If LibreOffice & pdftoppm are installed, use them for headless rasterization
-    if (hasLibreOffice && hasPdftoppm) {
-      const tempDir = path.join("/tmp", `conv_${docId}_${Date.now()}`);
-      try {
-        fs.mkdirSync(tempDir, { recursive: true });
-        execSync(`${officeBin} --headless --invisible --nodefault --nolockcheck -env:UserInstallation=file:///tmp/lo_${docId}_${Date.now()} --convert-to pdf --outdir "${tempDir}" "${pptxPath}"`, {
+        execSync(`gs -dNOPAUSE -dBATCH -sDEVICE=png16m -r150 -sOutputFile="${path.join(docSlideDir, "slide-%d.png")}" "${existingPdf}"`, {
           timeout: 90000,
           stdio: ["ignore", "pipe", "ignore"]
         });
-        const pdfFiles = fs.readdirSync(tempDir).filter(f => f.toLowerCase().endsWith(".pdf"));
-        if (pdfFiles.length > 0) {
-          const pdfPath = path.join(tempDir, pdfFiles[0]);
-          const pdfBuf = fs.readFileSync(pdfPath);
-          pdfBuffers.set(docId, pdfBuf);
-          const cachedPdfPath = path.join(RAW_FILES_DIR, `${docId}.pdf`);
-          fs.writeFileSync(cachedPdfPath, pdfBuf);
-          const pdfDirPath = path.join(PDF_DIR, `${docId}.pdf`);
-          fs.writeFileSync(pdfDirPath, pdfBuf);
-
-          execSync(`pdftoppm -png -r 150 "${pdfPath}" "${path.join(docSlideDir, "slide")}"`, {
-            timeout: 90000,
-            stdio: ["ignore", "pipe", "ignore"]
-          });
-
-          const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg)$/i.test(f));
-          if (generated.length > 0) {
-            return generated
-              .sort((a, b) => {
-                const numA = parseInt(a.replace(/\D/g, "") || "0", 10);
-                const numB = parseInt(b.replace(/\D/g, "") || "0", 10);
-                return numA - numB;
-              })
-              .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
-          }
+        const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
+        if (generated.length > 0) {
+          console.log(`[Ghostscript Engine] Successfully rendered ${generated.length} exact slides for ${docId}`);
+          return generated
+            .sort((a, b) => {
+              const numA = parseInt((a.match(/slide-?(\d+)/i) || a.match(/(\d+)/) || ["0", "0"])[1], 10);
+              const numB = parseInt((b.match(/slide-?(\d+)/i) || b.match(/(\d+)/) || ["0", "0"])[1], 10);
+              return numA - numB;
+            })
+            .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
         }
-      } catch (loErr) {
-        console.warn("[LibreOffice / pdftoppm render notice]:", loErr);
-      } finally {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      } catch (gsErr) {
+        console.warn("[Ghostscript direct render notice]:", gsErr);
       }
+    }
+
+    // Use our pure Python native SVG renderer script (zero binary dependencies required)
+    try {
+      fs.mkdirSync(docSlideDir, { recursive: true });
+      execSync(`python3 server/pptx_renderer.py "${pptxPath}" "${docSlideDir}"`, {
+        timeout: 90000,
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+
+      const generated = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
+      if (generated.length > 0) {
+        console.log(`[PPTX Renderer] Successfully rendered ${generated.length} exact slides for ${docId} via Python native SVG renderer`);
+        return generated
+          .sort((a, b) => {
+            const numA = parseInt((a.match(/slide-?(\d+)/i) || a.match(/(\d+)/) || ["0", "0"])[1], 10);
+            const numB = parseInt((b.match(/slide-?(\d+)/i) || b.match(/(\d+)/) || ["0", "0"])[1], 10);
+            return numA - numB;
+          })
+          .map((_, idx) => `/api/slide/${docId}/${idx + 1}`);
+      }
+    } catch (renderErr) {
+      console.warn("[Python PPTX Renderer error]:", renderErr);
     }
 
     // Native High-Fidelity Slide & PDF Engine (zero external binary dependencies)
@@ -921,68 +918,90 @@ async function startServer() {
           .filter(l => Boolean(l) && !l.startsWith("--- [Slide"));
 
         let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0c121e"/>
-      <stop offset="50%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#080d16"/>
-    </linearGradient>
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.75" opacity="0.4"/>
-    </pattern>
-  </defs>
-  <rect width="1600" height="900" fill="url(#bgGrad)"/>
-  <rect width="1600" height="900" fill="url(#grid)"/>
-  <rect x="0" y="0" width="1600" height="5" fill="#f59e0b"/>
+  <!-- Clean Widescreen Presentation Canvas -->
+  <rect width="1600" height="900" fill="#ffffff"/>
+  <rect width="1600" height="900" fill="#f8fafc" fill-opacity="0.85"/>
+  <rect x="0" y="0" width="1600" height="6" fill="#f59e0b"/>
 
-  <!-- Header -->
+  <!-- Slide Header Section -->
   <g transform="translate(60, 45)">
-    <rect x="0" y="0" width="130" height="32" rx="8" fill="#f59e0b" fill-opacity="0.15" stroke="#f59e0b" stroke-width="1.5"/>
-    <text x="65" y="21" fill="#fbbf24" font-size="14" font-weight="bold" font-family="system-ui, -apple-system, sans-serif" text-anchor="middle">SLIDE ${pageNum} / ${pages.length}</text>
-    <text x="150" y="21" fill="#94a3b8" font-size="14" font-family="system-ui, -apple-system, sans-serif" font-weight="600" letter-spacing="1">${safeSub}</text>
+    <text x="0" y="24" fill="#d97706" font-size="14" font-weight="700" font-family="system-ui, -apple-system, sans-serif" letter-spacing="1.5">SLIDE ${pageNum} OF ${pages.length}</text>
+    <text x="0" y="75" fill="#0f172a" font-size="38" font-weight="800" font-family="system-ui, -apple-system, sans-serif">${safeTitle}</text>
+    <line x1="0" y1="105" x2="1480" y2="105" stroke="#e2e8f0" stroke-width="2"/>
   </g>
-
-  <!-- Title -->
-  <text x="60" y="135" fill="#ffffff" font-size="36" font-weight="800" font-family="system-ui, -apple-system, sans-serif">${safeTitle}</text>
-  <line x1="60" y1="160" x2="1540" y2="160" stroke="#334155" stroke-width="1"/>
 `;
+
+        // Check if slide contains a markdown table
+        const tableLines = cleanLines.filter(l => l.startsWith("|") && l.endsWith("|"));
+        const nonTableLines = cleanLines.filter(l => !l.startsWith("|") || !l.endsWith("|"));
 
         if (diagramDataUrl) {
-          // Two-column layout with visual diagram on right
+          // Two-column layout with diagram on right
           svgContent += `
   <!-- Left Content Column -->
-  <g transform="translate(60, 195)">
+  <g transform="translate(60, 185)">
 `;
           let textY = 25;
-          for (let lineIdx = 0; lineIdx < Math.min(cleanLines.length, 12); lineIdx++) {
-            const line = cleanLines[lineIdx].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            svgContent += `    <circle cx="10" cy="${textY - 5}" r="4" fill="#fbbf24"/>
-    <text x="26" y="${textY}" fill="#e2e8f0" font-size="18" font-family="system-ui, -apple-system, sans-serif" font-weight="500">${line}</text>
+          for (let lineIdx = 0; lineIdx < Math.min(nonTableLines.length, 12); lineIdx++) {
+            const rawLine = nonTableLines[lineIdx];
+            const isSub = rawLine.startsWith("  ") || rawLine.startsWith("\t");
+            const cleanText = rawLine.replace(/^[*\-•\s]+/, "").trim();
+            const safeLine = cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            
+            const indentX = isSub ? 40 : 15;
+            svgContent += `    <circle cx="${indentX}" cy="${textY - 6}" r="${isSub ? 3 : 4.5}" fill="${isSub ? "#94a3b8" : "#d97706"}"/>
+    <text x="${indentX + 18}" y="${textY}" fill="#1e293b" font-size="${isSub ? 18 : 21}" font-family="system-ui, -apple-system, sans-serif" font-weight="${isSub ? 400 : 600}">${safeLine}</text>
 `;
-            textY += 38;
+            textY += isSub ? 34 : 42;
           }
           svgContent += `  </g>
 
   <!-- Right Diagram Frame -->
-  <rect x="740" y="190" width="800" height="620" rx="16" fill="#030712" stroke="#334155" stroke-width="1.5"/>
-  <image href="${diagramDataUrl}" x="760" y="210" width="760" height="580" preserveAspectRatio="xMidYMid meet"/>
+  <rect x="760" y="180" width="780" height="630" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <image href="${diagramDataUrl}" x="775" y="195" width="750" height="600" preserveAspectRatio="xMidYMid meet"/>
 `;
+        } else if (tableLines.length >= 3) {
+          // Render exact table rows and columns cleanly
+          const parsedRows = tableLines
+            .filter(l => !l.includes("---"))
+            .map(l => l.slice(1, -1).split("|").map(c => c.trim()));
+          
+          if (parsedRows.length > 0) {
+            const numCols = Math.max(...parsedRows.map(r => r.length));
+            const colWidth = Math.floor(1480 / numCols);
+            const rowHeight = Math.min(65, Math.floor(580 / parsedRows.length));
+            
+            svgContent += `  <!-- Presentation Table -->\n  <g transform="translate(60, 185)">\n`;
+            parsedRows.forEach((row, rIdx) => {
+              const y = rIdx * rowHeight;
+              const isHeader = rIdx === 0;
+              svgContent += `    <rect x="0" y="${y}" width="1480" height="${rowHeight}" fill="${isHeader ? "#f1f5f9" : rIdx % 2 === 0 ? "#ffffff" : "#f8fafc"}" stroke="#cbd5e1" stroke-width="1"/>\n`;
+              row.forEach((cell, cIdx) => {
+                const x = cIdx * colWidth;
+                const safeCell = cell.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                svgContent += `    <text x="${x + 20}" y="${y + rowHeight / 2 + 6}" fill="${isHeader ? "#0f172a" : "#334155"}" font-size="${isHeader ? 18 : 16}" font-weight="${isHeader ? 700 : 500}" font-family="system-ui, -apple-system, sans-serif">${safeCell.slice(0, 40)}</text>\n`;
+              });
+            });
+            svgContent += `  </g>\n`;
+          }
         } else {
-          // Full-width cards layout
+          // Standard clean presentation bullet list and text
           svgContent += `
-  <!-- Content Cards Grid -->
+  <!-- Presentation Slide Content -->
   <g transform="translate(60, 195)">
 `;
-          for (let lineIdx = 0; lineIdx < Math.min(cleanLines.length, 10); lineIdx++) {
-            const line = cleanLines[lineIdx].replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            const col = lineIdx % 2;
-            const row = Math.floor(lineIdx / 2);
-            const cardX = col * 750;
-            const curY = row * 125;
-            svgContent += `    <rect x="${cardX}" y="${curY}" width="720" height="105" rx="12" fill="#1e293b" fill-opacity="0.75" stroke="#334155" stroke-width="1"/>
-    <circle cx="${cardX + 24}" cy="${curY + 32}" r="5" fill="#fbbf24"/>
-    <text x="${cardX + 42}" y="${curY + 38}" fill="#f8fafc" font-size="18" font-weight="600" font-family="system-ui, -apple-system, sans-serif">${line}</text>
+          let textY = 25;
+          for (let lineIdx = 0; lineIdx < Math.min(cleanLines.length, 12); lineIdx++) {
+            const rawLine = cleanLines[lineIdx];
+            const isSub = rawLine.startsWith("  ") || rawLine.startsWith("\t");
+            const cleanText = rawLine.replace(/^[*\-•\s]+/, "").trim();
+            const safeLine = cleanText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            const indentX = isSub ? 45 : 15;
+            svgContent += `    <circle cx="${indentX}" cy="${textY - 6}" r="${isSub ? 3.5 : 5}" fill="${isSub ? "#94a3b8" : "#d97706"}"/>
+    <text x="${indentX + 22}" y="${textY}" fill="#1e293b" font-size="${isSub ? 20 : 24}" font-family="system-ui, -apple-system, sans-serif" font-weight="${isSub ? 400 : 600}">${safeLine}</text>
 `;
+            textY += isSub ? 40 : 48;
           }
           svgContent += `  </g>
 `;
@@ -990,9 +1009,9 @@ async function startServer() {
 
         svgContent += `
   <!-- Footer -->
-  <line x1="60" y1="840" x2="1540" y2="840" stroke="#1e293b" stroke-width="1"/>
-  <text x="60" y="868" fill="#64748b" font-size="13" font-family="ui-monospace, SFMono-Regular, monospace">PowerPoint Slide Deck • Slide ${pageNum} of ${pages.length}</text>
-  <text x="1540" y="868" fill="#64748b" font-size="13" font-family="ui-monospace, SFMono-Regular, monospace" text-anchor="end">Interactive Lecture Slide</text>
+  <line x1="60" y1="840" x2="1540" y2="840" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="60" y="870" fill="#64748b" font-size="14" font-weight="600" font-family="system-ui, -apple-system, sans-serif">${safeSub}</text>
+  <text x="1540" y="870" fill="#64748b" font-size="14" font-weight="700" font-family="system-ui, -apple-system, sans-serif" text-anchor="end">Slide ${pageNum} of ${pages.length}</text>
 </svg>`;
 
         fs.writeFileSync(path.join(docSlideDir, `slide-${pageNum}.svg`), svgContent, "utf-8");
@@ -1126,73 +1145,44 @@ async function startServer() {
     const safeSubtitle = esc(subtitle || "LECTURE NOTES");
     const safeDocTitle = esc(docTitle || "Course Notes Hub");
 
-    const bulletSvgLines = bullets.slice(0, 5).map((bullet, idx) => {
-      const y = 430 + idx * 105;
+    const cleanBulletElements = bullets.map((bullet, idx) => {
       const safeBullet = esc(bullet);
+      const y = 260 + idx * 60;
       return `
-        <g>
-          <circle cx="160" cy="${y - 9}" r="9" fill="#f59e0b" fill-opacity="0.9" />
-          <circle cx="160" cy="${y - 9}" r="16" fill="#f59e0b" fill-opacity="0.2" />
-          <text x="195" y="${y}" font-family="system-ui, -apple-system, sans-serif" font-size="30" font-weight="500" fill="#e2e8f0">${safeBullet}</text>
-        </g>
+        <circle cx="140" cy="${y - 8}" r="6" fill="#d97706" />
+        <text x="165" y="${y}" font-family="system-ui, -apple-system, sans-serif" font-size="28" font-weight="600" fill="#1e293b">${safeBullet}</text>
       `;
     }).join("");
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0b1120" />
-      <stop offset="40%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#1e293b" />
-    </linearGradient>
-    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#f59e0b" />
-      <stop offset="100%" stop-color="#fbbf24" />
-    </linearGradient>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.4" />
-    </filter>
-  </defs>
-
-  <!-- Deep Presentation Background -->
-  <rect width="1920" height="1080" fill="url(#bgGrad)" />
-
-  <!-- Subtle Ambient Glow Rings -->
-  <circle cx="1800" cy="120" r="450" fill="#f59e0b" fill-opacity="0.04" filter="blur(80px)" />
-  <circle cx="150" cy="950" r="380" fill="#3b82f6" fill-opacity="0.04" filter="blur(80px)" />
-
-  <!-- Slide Card Container -->
-  <rect x="70" y="50" width="1780" height="980" rx="28" fill="#131d31" fill-opacity="0.75" stroke="#334155" stroke-width="2" filter="url(#shadow)" />
+  <!-- Clean Widescreen Presentation Canvas (PowerPoint 16:9 Style) -->
+  <rect width="1920" height="1080" fill="#ffffff" />
+  <rect width="1920" height="1080" fill="#f8fafc" fill-opacity="0.85" />
 
   <!-- Top Accent Bar -->
-  <rect x="70" y="50" width="1780" height="8" rx="4" fill="url(#accentGrad)" />
+  <rect x="0" y="0" width="1920" height="8" fill="#f59e0b" />
 
-  <!-- Header Section -->
-  <g transform="translate(140, 130)">
-    <!-- Subtitle Pill -->
-    <rect x="0" y="0" width="${Math.max(220, safeSubtitle.length * 15 + 40)}" height="44" rx="22" fill="#f59e0b" fill-opacity="0.16" stroke="#f59e0b" stroke-width="1.5" />
-    <text x="20" y="28" font-family="monospace, monospace" font-size="19" font-weight="700" fill="#fbbf24" letter-spacing="1.5">${safeSubtitle.toUpperCase()}</text>
-
-    <!-- Page Number Badge Right -->
-    <rect x="1460" y="0" width="180" height="44" rx="12" fill="#1e293b" stroke="#475569" stroke-width="1.5" />
-    <text x="1550" y="28" text-anchor="middle" font-family="monospace, monospace" font-size="19" font-weight="800" fill="#cbd5e1">SLIDE ${pageNum} / ${totalPages}</text>
+  <!-- Slide Header Section -->
+  <g transform="translate(120, 85)">
+    <!-- Subtitle Eyebrow -->
+    <text x="0" y="30" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="800" fill="#d97706" letter-spacing="2.5">${safeSubtitle.toUpperCase()}</text>
 
     <!-- Main Title -->
-    <text x="0" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#ffffff" letter-spacing="-0.5">${safeTitle}</text>
-    
-    <!-- Divider -->
-    <line x1="0" y1="145" x2="1640" y2="145" stroke="#334155" stroke-width="2" stroke-dasharray="8 8" />
+    <text x="0" y="95" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#0f172a" letter-spacing="-0.5">${safeTitle}</text>
+
+    <!-- Divider Line -->
+    <line x1="0" y1="135" x2="1680" y2="135" stroke="#e2e8f0" stroke-width="2" />
   </g>
 
   <!-- Slide Body Content -->
-  ${bulletSvgLines}
+  ${cleanBulletElements}
 
   <!-- Footer Bar -->
-  <g transform="translate(140, 960)">
-    <line x1="0" y1="0" x2="1640" y2="0" stroke="#1e293b" stroke-width="1.5" />
-    <text x="0" y="32" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="600" fill="#64748b">${safeDocTitle}</text>
-    <text x="1640" y="32" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="500" fill="#64748b">Course Notes Hub &amp; Smart AI Study Tutor</text>
+  <g transform="translate(120, 1000)">
+    <line x1="0" y1="0" x2="1680" y2="0" stroke="#e2e8f0" stroke-width="1.5" />
+    <text x="0" y="36" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="600" fill="#64748b">${safeDocTitle}</text>
+    <text x="1680" y="36" text-anchor="end" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#64748b">Slide ${pageNum} of ${totalPages}</text>
   </g>
 </svg>`;
   }
@@ -1203,11 +1193,25 @@ async function startServer() {
     const pageNum = parseInt(req.params.page, 10);
     const docSlideDir = path.join(SLIDES_DIR, docId);
 
+    // 1. First check if exact raster image (PNG, WebP, JPG, SVG) already exists on disk
     if (fs.existsSync(docSlideDir)) {
+      const directPng = path.join(docSlideDir, `slide-${pageNum}.png`);
+      if (fs.existsSync(directPng)) {
+        res.setHeader("Content-Type", "image/png");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.sendFile(directPng);
+      }
       const files = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
+      files.sort((a, b) => {
+        const extA = path.extname(a).toLowerCase();
+        const extB = path.extname(b).toLowerCase();
+        if (extA === ".png" && extB !== ".png") return -1;
+        if (extB === ".png" && extA !== ".png") return 1;
+        return 0;
+      });
       const match = files.find(f => {
-        const num = parseInt(f.replace(/\D/g, "") || "-1", 10);
-        return num === pageNum;
+        const m = f.match(/slide-?(\d+)/i) || f.match(/(\d+)/);
+        return m && parseInt(m[1], 10) === pageNum;
       });
       if (match) {
         const filePath = path.join(docSlideDir, match);
@@ -1219,51 +1223,37 @@ async function startServer() {
       }
     }
 
-    // Dynamic High-Fidelity Presentation SVG Generator:
-    // If exact pre-rendered image doesn't exist on disk (e.g. in minimal Render/cloud containers),
-    // dynamically synthesize a 16:9 high-definition vector presentation slide SVG so images never break!
-    try {
-      const doc = serverDocuments.find(d => d.id === docId || d.originalFileName === docId || (d.title && d.title.includes(docId)));
-      const sec = doc?.sections?.[pageNum - 1];
-      const totalPages = doc?.pageCount || doc?.sections?.length || 1;
-      const title = sec?.title || (doc ? `${doc.title} - Slide ${pageNum}` : `Slide ${pageNum}`);
-      const subtitle = sec?.subtitle || doc?.unit || doc?.subject || "LECTURE SLIDE";
-      const docTitle = doc?.title || "Course Notes Hub";
-
-      // Parse bullet points from contentMarkdown
-      const rawContent = sec?.contentMarkdown || sec?.content || "";
-      const bulletLines: string[] = [];
-      const lines = rawContent.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.replace(/^[#*\-•\d.]+\s*/, "").trim();
-        if (trimmed && trimmed.length > 5 && !trimmed.startsWith("```") && !trimmed.startsWith("|")) {
-          bulletLines.push(trimmed.length > 105 ? trimmed.slice(0, 102) + "..." : trimmed);
-        }
-        if (bulletLines.length >= 5) break;
-      }
-
-      if (bulletLines.length === 0) {
-        bulletLines.push("Core concept overview and detailed lecture presentation points.");
-        bulletLines.push("Refer to the structured notes panel for complete reference material.");
-      }
-
-      const svg = generateSlideSvg(title, subtitle, bulletLines, pageNum, totalPages, docTitle);
-
-      // Cache SVG to docSlideDir if possible
+    // 2. If slide image is not yet rendered, check if raw PPTX/PPT exists in RAW_FILES_DIR and render on the fly
+    if (fs.existsSync(RAW_FILES_DIR)) {
       try {
-        if (!fs.existsSync(docSlideDir)) {
-          fs.mkdirSync(docSlideDir, { recursive: true });
-        }
-        fs.writeFileSync(path.join(docSlideDir, `slide-${pageNum}.svg`), svg, "utf-8");
-      } catch {}
+        const rawFile = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${docId}.`) && /\.(pptx|ppt)$/i.test(f));
+        if (rawFile) {
+          const rawPath = path.join(RAW_FILES_DIR, rawFile);
+          await renderPptxToSlideImages(docId, rawPath);
 
-      res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      return res.status(200).send(svg);
-    } catch (svgErr) {
-      console.error("[SLIDE-SVG] Error generating fallback slide SVG:", svgErr);
-      return res.status(404).json({ error: "Slide image not found" });
+          if (fs.existsSync(docSlideDir)) {
+            const files = fs.readdirSync(docSlideDir).filter(f => /\.(png|webp|jpg|jpeg|svg)$/i.test(f));
+            const match = files.find(f => {
+              const m = f.match(/slide-?(\d+)/i) || f.match(/(\d+)/);
+              return m && parseInt(m[1], 10) === pageNum;
+            });
+            if (match) {
+              const filePath = path.join(docSlideDir, match);
+              const ext = path.extname(match).toLowerCase();
+              const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".svg" ? "image/svg+xml" : "image/jpeg";
+              res.setHeader("Content-Type", mimeType);
+              res.setHeader("Cache-Control", "public, max-age=86400");
+              return res.sendFile(filePath);
+            }
+          }
+        }
+      } catch (renderErr) {
+        console.warn("[On-demand slide render notice]:", renderErr);
+      }
     }
+
+    // If exact pre-rendered image doesn't exist on disk, return 404 so PptReader seamlessly falls back to the official Office / Google Docs viewer iframe
+    return res.status(404).json({ error: "Slide image not found" });
   });
 
   // Document Parser API route: parses uploaded file (PDF, DOCX, PPTX, PPT, DOC, TXT, MD, Code, JSON) into structured NoteDocument
@@ -1373,7 +1363,7 @@ async function startServer() {
 
       let extractedText = "";
       let pdfPageCount = 1;
-      let extractedPages: { pageNum: number; title?: string; subtitle?: string; text: string; callouts?: any[] }[] = [];
+      let extractedPages: { pageNum: number; title?: string; subtitle?: string; text: string; speakerNotes?: string; callouts?: any[] }[] = [];
 
       // 1. PDF Parser
       if (isPdf && realIsPdf) {
@@ -1523,6 +1513,7 @@ Output ONLY valid JSON in this format:
             title: pageTitle,
             subtitle: pageObj?.subtitle || defaultSubtitle,
             contentMarkdown: pageContent || `*(${isPptx || isPpt ? `Slide` : `Page`} ${pageNum})*`,
+            speakerNotes: pageObj?.speakerNotes,
             callouts: pageObj?.callouts || [],
             codeBlocks: []
           });
@@ -1908,6 +1899,45 @@ Output ONLY valid JSON in this format:
       console.warn("[ChromaDB] Re-index error on PUT /api/documents/:id:", e?.message || e);
     }
     return res.json({ document: serverDocuments[idx], success: true });
+  });
+
+  // POST /api/documents/:id/re-render (Re-renders presentation slides and PDF using LibreOffice & Poppler)
+  app.post("/api/documents/:id/re-render", async (req, res) => {
+    const docId = req.params.id;
+    const doc = serverDocuments.find(d => d.id === docId);
+    if (!doc) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+
+    let rawFilePath = "";
+    if (fs.existsSync(RAW_FILES_DIR)) {
+      const match = fs.readdirSync(RAW_FILES_DIR).find(f => f.startsWith(`${docId}.`) && /\.(pptx|ppt)$/i.test(f));
+      if (match) rawFilePath = path.join(RAW_FILES_DIR, match);
+    }
+
+    if (!rawFilePath) {
+      return res.status(400).json({ error: "Original presentation file not found on server. Please re-upload the presentation to render high-definition slides." });
+    }
+
+    try {
+      const docSlideDir = path.join(SLIDES_DIR, docId);
+      if (fs.existsSync(docSlideDir)) {
+        fs.rmSync(docSlideDir, { recursive: true, force: true });
+      }
+
+      const slideUrls = await renderPptxToSlideImages(docId, rawFilePath);
+      doc.slideImages = slideUrls;
+      doc.pdfUrl = `/api/pdf/${docId}`;
+      if (doc.sections && slideUrls.length > 0) {
+        doc.sections.forEach((sec: any, idx: number) => {
+          if (slideUrls[idx]) sec.slideImageUrl = slideUrls[idx];
+        });
+      }
+      saveDocuments();
+      return res.json({ success: true, document: doc, slideImages: slideUrls });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message || "Failed to re-render presentation" });
+    }
   });
 
   // PUT /api/documents/:id/publish (Toggle publication status)

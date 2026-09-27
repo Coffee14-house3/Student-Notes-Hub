@@ -23,6 +23,7 @@ export interface ParsedDocumentResult {
     title: string;
     subtitle?: string;
     text: string;
+    speakerNotes?: string;
     callouts?: Array<{ type: "info" | "definition" | "case-study" | "warning" | "tip"; title: string; content: string }>;
   }>;
 }
@@ -138,9 +139,10 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
     const zip = new AdmZip(buffer);
     const zipEntries = zip.getEntries();
 
-    // 1. Locate all slide XML entries
+    // 1. Locate all slide XML entries and map relationships
     const slideEntries: { entry: any; slideNum: number }[] = [];
-    const notesMap: Map<number, string> = new Map();
+    const notesSlidesMap: Map<string, string> = new Map(); // entryName -> rawXml
+    const notesRelMap: Map<number, string> = new Map(); // slideNum -> notesSlideXml
 
     for (const entry of zipEntries) {
       const entryName = entry.entryName;
@@ -154,14 +156,27 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
         });
       }
 
-      // Match ppt/notesSlides/notesSlide1.xml for speaker notes
-      const notesMatch = entryName.match(/ppt\/notesSlides\/notesSlide(\d+)\.xml/i);
-      if (notesMatch) {
+      // Store notes slides for lookup
+      if (/ppt\/notesSlides\/notesSlide\d+\.xml/i.test(entryName)) {
         try {
-          const notesXml = entry.getData().toString("utf-8");
-          const noteTexts = [...notesXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map(m => m[1]).join(" ").trim();
-          if (noteTexts && !noteTexts.includes("Click to add notes")) {
-            notesMap.set(parseInt(notesMatch[1], 10), noteTexts);
+          notesSlidesMap.set(entryName, entry.getData().toString("utf-8"));
+        } catch {}
+      }
+    }
+
+    // Inspect notesSlide rels to accurately map to slideNum
+    for (const entry of zipEntries) {
+      const relMatch = entry.entryName.match(/ppt\/notesSlides\/_rels\/notesSlide(\d+)\.xml\.rels/i);
+      if (relMatch) {
+        try {
+          const relXml = entry.getData().toString("utf-8");
+          const targetMatch = relXml.match(/Target="(?:\.\.\/)?slides\/slide(\d+)\.xml"/i);
+          if (targetMatch) {
+            const targetSlideNum = parseInt(targetMatch[1], 10);
+            const notesXml = notesSlidesMap.get(`ppt/notesSlides/notesSlide${relMatch[1]}.xml`);
+            if (notesXml) {
+              notesRelMap.set(targetSlideNum, notesXml);
+            }
           }
         } catch {}
       }
@@ -182,10 +197,12 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
       const pageNum = i + 1; // 1-indexed presentation slide number
       const xmlStr = slideItem.entry.getData().toString("utf-8");
 
-      // 1. Extract slide relationships (linked media / images)
+      // 1. Extract slide relationships (linked media / images & notes)
       const relsMap: Map<string, string> = new Map();
       const relsEntryName = `ppt/slides/_rels/slide${slideItem.slideNum}.xml.rels`;
       const relsEntry = zip.getEntry(relsEntryName);
+      let notesSlideFromRel = "";
+
       if (relsEntry) {
         try {
           const relsXml = relsEntry.getData().toString("utf-8");
@@ -194,6 +211,10 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
             let target = match[2];
             target = target.replace(/^\.\.\//, "ppt/");
             relsMap.set(rId, target);
+
+            if (/notesSlide\d+\.xml/i.test(target)) {
+              notesSlideFromRel = target;
+            }
           }
         } catch {}
       }
@@ -217,7 +238,53 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
         }
       }
 
-      // 3. Extract slide title and verbatim text content from shapes in order
+      // 3. Extract PowerPoint Tables (<a:tbl>) verbatim
+      const tableMatches = [...xmlStr.matchAll(/<a:tbl>([\s\S]*?)<\/a:tbl>/g)];
+      const tableMarkdowns: string[] = [];
+
+      for (const tblMatch of tableMatches) {
+        const tblXml = tblMatch[1];
+        const rowMatches = [...tblXml.matchAll(/<a:tr[^>]*>([\s\S]*?)<\/a:tr>/g)];
+        const tableRows: string[][] = [];
+
+        for (const rMatch of rowMatches) {
+          const trXml = rMatch[1];
+          const cellMatches = [...trXml.matchAll(/<a:tc[^>]*>([\s\S]*?)<\/a:tc>/g)];
+          const rowCells: string[] = [];
+
+          for (const cMatch of cellMatches) {
+            const tcXml = cMatch[1];
+            const cellTexts = [...tcXml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+              .map(m => unescapeXml(m[1]))
+              .join(" ")
+              .trim()
+              .replace(/\|/g, "\\|");
+            rowCells.push(cellTexts || "-");
+          }
+          if (rowCells.some(c => c && c !== "-")) {
+            tableRows.push(rowCells);
+          }
+        }
+
+        if (tableRows.length > 0) {
+          const colCount = Math.max(...tableRows.map(r => r.length));
+          const normalizedRows = tableRows.map(r => {
+            const row = [...r];
+            while (row.length < colCount) row.push("-");
+            return row;
+          });
+
+          const headerRow = normalizedRows[0];
+          const mdTable = [
+            `| ${headerRow.join(" | ")} |`,
+            `| ${headerRow.map(() => "---").join(" | ")} |`,
+            ...normalizedRows.slice(1).map(r => `| ${r.join(" | ")} |`)
+          ].join("\n");
+          tableMarkdowns.push(mdTable);
+        }
+      }
+
+      // 4. Extract slide title and verbatim text content from shapes in order
       let slideTitle = "";
       let slideSubtitle = "";
 
@@ -266,16 +333,52 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
         }
       }
 
-      // Build slide markdown preserving the teacher's exact text and adding slide diagrams
-      let slideMarkdown = "";
+      // 5. Extract verbatim Speaker Notes / Slide Notes from PPTX notesSlide
+      let speakerNotes = "";
+      const rawNotesXml = notesSlideFromRel 
+        ? notesSlidesMap.get(notesSlideFromRel) 
+        : notesRelMap.get(slideItem.slideNum) || notesSlidesMap.get(`ppt/notesSlides/notesSlide${slideItem.slideNum}.xml`);
+
+      if (rawNotesXml) {
+        try {
+          const noteShapes = [...rawNotesXml.matchAll(/<p:sp>([\s\S]*?)<\/p:sp>/g)];
+          const extractedNoteParas: string[] = [];
+
+          for (const sp of noteShapes) {
+            const sXml = sp[1];
+            // Skip slide number or slide preview frames inside notes slide
+            if (/<p:ph[^>]*type=\"(?:sldNum|dt|hdr|ftr|sldImg)\"/i.test(sXml)) continue;
+
+            const pMatches = [...sXml.matchAll(/<a:p>([\s\S]*?)<\/a:p>/g)];
+            for (const p of pMatches) {
+              const text = [...p[1].matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)]
+                .map(m => unescapeXml(m[1]))
+                .join("")
+                .trim();
+              if (text && !text.includes("Click to add notes")) {
+                extractedNoteParas.push(text);
+              }
+            }
+          }
+          if (extractedNoteParas.length > 0) {
+            speakerNotes = extractedNoteParas.join("\n\n");
+          }
+        } catch {}
+      }
+
+      // Build slide markdown preserving the teacher's exact text, tables, and diagrams
+      const contentParts: string[] = [];
       if (bodyLines.length > 0) {
-        slideMarkdown = bodyLines.join("\n\n");
+        contentParts.push(bodyLines.join("\n\n"));
       }
-
+      if (tableMarkdowns.length > 0) {
+        contentParts.push(tableMarkdowns.join("\n\n"));
+      }
       if (slideImages.length > 0) {
-        slideMarkdown += (slideMarkdown ? "\n\n" : "") + slideImages.map(img => `![Slide Diagram](${img.dataUrl})`).join("\n\n");
+        contentParts.push(slideImages.map(img => `![Slide Diagram](${img.dataUrl})`).join("\n\n"));
       }
 
+      let slideMarkdown = contentParts.join("\n\n");
       if (!slideMarkdown.trim()) {
         slideMarkdown = `*(Slide ${pageNum})*\n`;
       }
@@ -285,10 +388,11 @@ export async function parsePptxBuffer(buffer: Buffer, fileName: string): Promise
         title: slideTitle,
         subtitle: slideSubtitle || `Slide ${pageNum} of ${slideEntries.length} • PowerPoint Deck`,
         text: slideMarkdown.trim(),
+        speakerNotes: speakerNotes.trim() || undefined,
         callouts: []
       });
 
-      fullTextAccumulator += `\n\n--- [Slide ${pageNum}: ${slideTitle}] ---\n${slideMarkdown}`;
+      fullTextAccumulator += `\n\n--- [Slide ${pageNum}: ${slideTitle}] ---\n${slideMarkdown}${speakerNotes ? `\n\n[Speaker Notes]\n${speakerNotes}` : ""}`;
     }
 
     return {

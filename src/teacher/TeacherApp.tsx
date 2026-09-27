@@ -428,7 +428,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
       {/* Main Studio Area */}
       <main className="flex-1">
-        {activeView === "dashboard" || !currentDocument ? (
+        {activeView === "dashboard" ? (
           <TeacherPortal
             documents={documents}
             announcements={announcements}

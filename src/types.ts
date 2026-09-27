@@ -59,6 +59,7 @@ export interface NoteSection {
   title: string;
   subtitle?: string;
   contentMarkdown: string;
+  speakerNotes?: string;
   slideImageUrl?: string;
   callouts?: CalloutBox[];
   tables?: TableData[];

@@ -39,6 +39,7 @@ export const PdfCanvasViewer: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"single" | "continuous">("continuous");
   const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
+  const [viewNative, setViewNative] = useState<boolean>(true);
 
   const singleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -433,6 +434,39 @@ export const PdfCanvasViewer: React.FC<Props> = ({
         tabIndex={0}
         className="flex-1 overflow-y-auto overflow-x-auto bg-[#e5e7eb] dark:bg-[#1f1f23] p-3 sm:p-6 md:p-8 flex flex-col items-center relative w-full h-full outline-none focus:outline-none"
       >
+        {viewNative && !isLoading && !error ? (
+          <div className="w-full h-full flex flex-col bg-white shadow-2xl rounded-lg overflow-hidden border border-slate-300">
+            <div className="h-11 bg-[#18181b] border-b border-[#33333d] flex items-center justify-between px-4 text-xs text-slate-200 shrink-0">
+              <span className="font-bold flex items-center gap-2 text-amber-400">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                Untouched Original Document Viewer ({documentTitle})
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={sourceUrl || `/api/pdf/doc`}
+                  download={`${documentTitle}.pdf`}
+                  className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs"
+                >
+                  Download Original File
+                </a>
+                <button
+                  onClick={() => setViewNative(false)}
+                  className="px-3 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer"
+                >
+                  Switch to Canvas View
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={sourceUrl || `/api/pdf/doc`}
+              className="w-full flex-1 border-0 bg-white"
+              title={documentTitle}
+            />
+          </div>
+        ) : null}
+
+        {(!viewNative || isLoading || error) && (
+          <>
         {isLoading && (
           <div className="my-auto flex flex-col items-center justify-center space-y-3 p-6 sm:p-8 text-center bg-white/80 dark:bg-[#202025]/80 backdrop-blur-md rounded-2xl shadow-xl border border-slate-300 dark:border-slate-700 max-w-sm">
             <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
@@ -479,29 +513,26 @@ export const PdfCanvasViewer: React.FC<Props> = ({
               </div>
             ) : fallbackSections && fallbackSections[activePage - 1] ? (
               <div 
-                className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 transition-transform max-w-full p-2 sm:p-4"
+                className="bg-white shadow-2xl rounded-xl overflow-hidden border border-slate-300 transition-transform max-w-full p-2 sm:p-4"
                 style={{ transform: `scale(${scale})`, transformOrigin: "top center" }}
               >
-                <div className="w-full sm:w-[840px] max-w-full min-h-[460px] sm:min-h-[540px] bg-[#1a2332] text-white rounded-xl p-6 sm:p-10 relative overflow-hidden font-sans flex flex-col justify-between shadow-2xl">
-                  <div className="absolute -top-16 -right-16 w-72 h-72 rounded-full bg-[#222f42] opacity-60 pointer-events-none blur-md" />
-                  <div className="absolute -bottom-20 -right-20 w-80 h-80 rounded-full bg-[#1e2a3c] opacity-80 pointer-events-none" />
+                <div className="w-full sm:w-[960px] max-w-full aspect-[16/9] bg-white text-slate-900 rounded-xl p-8 sm:p-12 relative overflow-hidden font-sans flex flex-col justify-between shadow-xl border border-slate-200">
+                  <div className="absolute top-0 left-0 right-0 h-1.5 bg-amber-500" />
                   <div className="relative z-10">
-                    <div className="w-10 h-10 rounded-xl bg-[#232f42] border border-[#34445d] flex items-center justify-center mb-4 sm:mb-6 shadow-md">
-                      <Layers className="w-5 h-5 text-amber-400" />
+                    <div className="text-amber-600 font-extrabold uppercase tracking-widest text-xs sm:text-sm mb-2">
+                      {fallbackSections[activePage - 1]?.subtitle || shortTitle || `SLIDE ${activePage}`}
                     </div>
-                    <div className="text-amber-400 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2">
-                      {fallbackSections[activePage - 1]?.subtitle || shortTitle || "PRESENTATION DECK"}
-                    </div>
-                    <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-tight leading-tight mb-4">
+                    <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight mb-4">
                       {fallbackSections[activePage - 1]?.title || `Slide ${activePage}`}
                     </h1>
-                    <div className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-6 font-normal">
-                      <PaperMarkdownRenderer content={fallbackSections[activePage - 1]?.contentMarkdown || ""} isDark={true} />
+                    <div className="w-full h-0.5 bg-slate-200 my-4" />
+                    <div className="text-slate-700 text-xs sm:text-sm leading-relaxed mb-6 font-normal">
+                      <PaperMarkdownRenderer content={fallbackSections[activePage - 1]?.contentMarkdown || ""} isDark={false} />
                     </div>
                   </div>
-                  <div className="pt-3 border-t border-[#2d3a50] flex items-center justify-between text-xs text-slate-400 font-mono relative z-10">
+                  <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 font-mono relative z-10">
                     <span className="truncate pr-2">{documentTitle || `Slide ${activePage}`}</span>
-                    <span>{activePage} / {numPages}</span>
+                    <span className="font-bold text-slate-700">Slide {activePage} of {numPages}</span>
                   </div>
                 </div>
               </div>
@@ -544,25 +575,24 @@ export const PdfCanvasViewer: React.FC<Props> = ({
                         />
                       </div>
                     ) : (
-                      <div className="bg-white shadow-2xl rounded-xs overflow-hidden border border-slate-300 p-4 max-w-full">
-                        <div className="w-full sm:w-[840px] max-w-full min-h-[460px] sm:min-h-[540px] bg-[#1a2332] text-white rounded-xl p-6 sm:p-10 relative overflow-hidden font-sans flex flex-col justify-between shadow-2xl">
+                      <div className="bg-white shadow-2xl rounded-xl overflow-hidden border border-slate-300 p-2 sm:p-4 max-w-full">
+                        <div className="w-full sm:w-[960px] max-w-full aspect-[16/9] bg-white text-slate-900 rounded-xl p-8 sm:p-12 relative overflow-hidden font-sans flex flex-col justify-between shadow-xl border border-slate-200">
+                          <div className="absolute top-0 left-0 right-0 h-1.5 bg-amber-500" />
                           <div className="relative z-10">
-                            <div className="w-10 h-10 rounded-xl bg-[#232f42] border border-[#34445d] flex items-center justify-center mb-4 shadow-md">
-                              <Layers className="w-5 h-5 text-amber-400" />
-                            </div>
-                            <div className="text-amber-400 font-bold uppercase tracking-widest text-[11px] sm:text-xs mb-2">
+                            <div className="text-amber-600 font-extrabold uppercase tracking-widest text-xs sm:text-sm mb-2">
                               {sec.subtitle || `SLIDE ${pageNum} OF ${numPages}`}
                             </div>
-                            <h2 className="font-serif text-2xl sm:text-3xl font-extrabold text-white mb-4">
+                            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-4">
                               {sec.title || `Slide ${pageNum}`}
                             </h2>
-                            <div className="text-slate-300 text-xs sm:text-sm leading-relaxed mb-6">
-                              <PaperMarkdownRenderer content={sec.contentMarkdown || ""} isDark={true} />
+                            <div className="w-full h-0.5 bg-slate-200 my-4" />
+                            <div className="text-slate-700 text-xs sm:text-sm leading-relaxed mb-6">
+                              <PaperMarkdownRenderer content={sec.contentMarkdown || ""} isDark={false} />
                             </div>
                           </div>
-                          <div className="pt-3 border-t border-[#2d3a50] flex items-center justify-between text-xs text-slate-400 font-mono">
+                          <div className="pt-3 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 font-mono">
                             <span className="truncate pr-2">{documentTitle}</span>
-                            <span>{pageNum} / {numPages}</span>
+                            <span className="font-bold text-slate-700">Slide {pageNum} of {numPages}</span>
                           </div>
                         </div>
                       </div>
@@ -572,6 +602,9 @@ export const PdfCanvasViewer: React.FC<Props> = ({
               })
             ) : null}
           </div>
+        )}
+
+          </>
         )}
 
         {/* Floating Page Badge Overlay Bottom Left (Matching Screenshot) */}

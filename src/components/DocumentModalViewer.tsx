@@ -4,7 +4,7 @@ import {
   Download, HelpCircle, Layers, FileText, Bookmark, Grid, 
   RotateCcw, PanelLeft, Sun, Moon, X, Copy, Check,
   Upload, LayoutGrid, FolderCog, Edit3, Trash2, MessageSquare,
-  Info, GitMerge, Volume2, List, Printer, Plus, Minus, ExternalLink
+  Info, GitMerge, Volume2, List, Printer, Plus, Minus, ExternalLink, Tv, MessageSquareQuote
 } from "lucide-react";
 import { NoteDocument, NoteSection, ReadingSettings, UserBookmark } from "../types";
 import { InteractiveDiagramRenderer } from "./InteractiveDiagrams";
@@ -21,6 +21,7 @@ import { DocumentDetailsModal } from "./DocumentDetailsModal";
 import { DocumentMergeModal } from "./DocumentMergeModal";
 import { TextToSpeechPlayer } from "./TextToSpeechPlayer";
 import { DocumentOutlineDrawer } from "./DocumentOutlineDrawer";
+import { PptReader } from "./PptReader";
 
 interface Props {
   notes?: NoteDocument[];
@@ -123,7 +124,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
     }
   };
 
-  const activeView = propsActiveView || (propDocument ? propDocument.id : internalActiveView) || notes[0]?.id || "";
+  const activeView = propsActiveView || internalActiveView || propDocument?.id || notes[0]?.id || "";
 
   const setActiveView = (view: string) => {
     if (view === "dashboard" && onClose) {
@@ -210,7 +211,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [showQuizModal, setShowQuizModal] = useState<boolean>(false);
   const [isContinuousScroll, setIsContinuousScroll] = useState<boolean>(true);
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"pdf" | "notes" | "split">("pdf");
+  const [viewMode, setViewMode] = useState<"pdf" | "notes" | "split" | "ppt">("pdf");
   const [showFileActionsMenu, setShowFileActionsMenu] = useState<boolean>(false);
   const [showSummaryModal, setShowSummaryModal] = useState<boolean>(false);
   const [showRenameModal, setShowRenameModal] = useState<boolean>(false);
@@ -237,12 +238,13 @@ export const DocumentModalViewer: React.FC<Props> = ({
         reader.readAsDataURL(file);
       });
 
+      const isPptx = file.name.toLowerCase().endsWith(".pptx") || file.name.toLowerCase().endsWith(".ppt");
       const res = await fetch("/api/parse-document", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fileName: file.name,
-          fileType: "application/pdf",
+          fileType: file.type || (isPptx ? "application/vnd.openxmlformats-officedocument.presentationml.presentation" : "application/pdf"),
           fileContent,
           title: activeDoc.title,
           subject: activeDoc.subject,
@@ -260,7 +262,9 @@ export const DocumentModalViewer: React.FC<Props> = ({
         if (newDoc) {
           activeDoc.pdfUrl = newDoc.pdfUrl;
           activeDoc.pdfDataUrl = newDoc.pdfDataUrl;
-          activeDoc.fileFormat = "pdf";
+          activeDoc.fileFormat = newDoc.fileFormat;
+          activeDoc.slideImages = newDoc.slideImages;
+          activeDoc.sections = newDoc.sections;
           if (onUploadDocument) {
             onUploadDocument(file);
           }
@@ -399,6 +403,17 @@ export const DocumentModalViewer: React.FC<Props> = ({
       });
     });
 
+    const allSlideImages: string[] = [];
+    targetDocs.forEach((doc) => {
+      if (doc.slideImages && doc.slideImages.length > 0) {
+        allSlideImages.push(...doc.slideImages);
+      } else if (doc.sections) {
+        doc.sections.forEach((sec, sIdx) => {
+          allSlideImages.push(sec.slideImageUrl || (doc.id ? `/api/slide/${doc.id}/${sIdx + 1}` : ""));
+        });
+      }
+    });
+
     const displayTitle = isGlobalAll
       ? `📚 All Course Notes (${targetDocs.length} Documents Combined)`
       : `📚 All ${effectiveUnit} Notes (${targetDocs.length} ${targetDocs.length === 1 ? 'Document' : 'Documents'} Combined)`;
@@ -417,6 +432,8 @@ export const DocumentModalViewer: React.FC<Props> = ({
       sections: combinedSections,
       pdfUrl: targetDocs.length === 1 ? targetDocs[0].pdfUrl : undefined,
       pdfDataUrl: targetDocs.length === 1 ? targetDocs[0].pdfDataUrl : undefined,
+      fileFormat: "pptx",
+      slideImages: allSlideImages
     };
   }, [notes, effectiveUnit, notesByUnit, activeView]);
 
@@ -427,6 +444,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
     : (singleDoc || notes[0] || allFilesDoc);
 
   const isPptxDoc = Boolean(
+    isAllFilesView ||
     activeDoc?.fileFormat === "pptx" || 
     activeDoc?.fileFormat === "ppt" || 
     activeDoc?.title?.toLowerCase().endsWith(".pptx") || 
@@ -440,6 +458,12 @@ export const DocumentModalViewer: React.FC<Props> = ({
     (activeDoc?.tags && activeDoc.tags.some(t => t.toLowerCase().includes("powerpoint") || t.toLowerCase() === "ppt" || t.toLowerCase() === "pptx")) ||
     (activeDoc?.slideImages && activeDoc.slideImages.length > 0)
   );
+
+  useEffect(() => {
+    if (isPptxDoc) {
+      setViewMode("ppt");
+    }
+  }, [isPptxDoc]);
 
   const effectiveSlideImages = useMemo(() => {
     if (activeDoc?.slideImages && activeDoc.slideImages.length > 0) {
@@ -458,7 +482,9 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
-    if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl || isPptxDoc) {
+    if (isPptxDoc) {
+      setViewMode("ppt");
+    } else if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) {
       setViewMode("pdf");
     } else {
       setViewMode("notes");
@@ -613,6 +639,50 @@ export const DocumentModalViewer: React.FC<Props> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentPage, totalPages, showQuizModal, showSummaryModal, showRenameModal, showDetailsModal, showMergeModal, showTtsPlayer, showOutlineDrawer]);
+
+  // Dedicated High-Fidelity PowerPoint Reader Experience
+  if (isPptxDoc && activeDoc && viewMode === "ppt") {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-row bg-[#12141a] text-slate-100 overflow-hidden font-sans">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          <PptReader
+            doc={activeDoc}
+            initialSlide={currentPage}
+            onClose={handleCloseViewer}
+            onSwitchToNotes={() => setViewMode("notes")}
+            onSwitchToPdf={() => setViewMode("pdf")}
+            onToggleAiPanel={handleToggleAiPanel}
+            isAiPanelOpen={effectiveAiChatOpen}
+            allUnits={allUnits}
+            notesByUnit={notesByUnit}
+            activeView={activeView}
+            setActiveView={setActiveView}
+            setCurrentUnitContext={setCurrentUnitContext}
+            isAllFilesView={isAllFilesView}
+            effectiveUnit={effectiveUnit}
+          />
+        </div>
+        <>
+          {effectiveAiChatOpen && (
+            <div 
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 sm:hidden"
+              onClick={handleCloseAiPanel}
+            />
+          )}
+          <aside className={`${effectiveAiChatOpen ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full max-w-md sm:relative sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
+            <AiAssistantModal
+              isOpen={effectiveAiChatOpen}
+              onClose={handleCloseAiPanel}
+              contextText={activeSections.map(s => `[Slide ${s.pageNumber} - ${s.title}]: ${s.contentMarkdown || s.speakerNotes || ""}`).join("\n\n")}
+              activeDocument={activeDoc}
+              isEmbedded={true}
+              onNavigateToPage={(p) => setCurrentPage(p)}
+            />
+          </aside>
+        </>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-[#1e1e1e] text-slate-100 overflow-hidden font-sans select-text">
@@ -793,14 +863,26 @@ export const DocumentModalViewer: React.FC<Props> = ({
         {/* Right Tools: Ask AI & Close Button */}
         <div className="flex items-center gap-2 shrink-0">
           {isPptxDoc && (
+            <button
+              type="button"
+              onClick={() => setViewMode("ppt")}
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer"
+              title="Open PowerPoint Reader mode"
+            >
+              <Tv className="w-3.5 h-3.5" />
+              <span>PPT Reader</span>
+            </button>
+          )}
+
+          {isPptxDoc && (
             <a
               href={activeDoc?.downloadUrl || activeDoc?.originalFileUrl || `/api/download/${activeDoc?.id}`}
               download={activeDoc?.originalFileName || `${activeDoc?.title || "presentation"}.pptx`}
-              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/40 cursor-pointer"
-              title="Download original untouched PowerPoint presentation (.pptx)"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all shadow-lg bg-orange-600 hover:bg-orange-500 text-white border border-orange-400 cursor-pointer animate-pulse"
+              title="Download your exact untouched original PowerPoint presentation (.pptx)"
             >
-              <Download className="w-3.5 h-3.5 text-orange-400" />
-              <span className="hidden sm:inline">Download PPT</span>
+              <Download className="w-4 h-4 text-white" />
+              <span>📥 Download Original PPT File</span>
             </a>
           )}
 
@@ -937,17 +1019,28 @@ export const DocumentModalViewer: React.FC<Props> = ({
                       >
                         {sec.title}
                       </div>
-                      {isPptxDoc && (sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])) && (
-                        <div className="w-full aspect-[16/9] rounded overflow-hidden bg-black/50 border border-slate-700/60 mt-1">
-                          <img
-                            src={sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])}
-                            alt={`Slide ${pageNum}`}
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = "none";
-                            }}
-                            className="w-full h-full object-contain pointer-events-none"
-                            loading="lazy"
-                          />
+                      {isPptxDoc && (
+                        <div className="w-full aspect-[16/9] rounded overflow-hidden bg-white dark:bg-[#1a202c] border border-slate-200 dark:border-slate-700 mt-1.5 relative flex items-center justify-center shadow-xs">
+                          {(sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])) ? (
+                            <img
+                              src={sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])}
+                              alt={`Slide ${pageNum}`}
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = "none";
+                                const parent = (e.target as HTMLElement).parentElement;
+                                if (parent) {
+                                  const fallbackEl = parent.querySelector(".thumb-fallback");
+                                  if (fallbackEl) (fallbackEl as HTMLElement).style.display = "flex";
+                                }
+                              }}
+                              className="w-full h-full object-contain pointer-events-none"
+                              loading="lazy"
+                            />
+                          ) : null}
+                          <div className={`thumb-fallback ${(sec.slideImageUrl || (effectiveSlideImages && effectiveSlideImages[idx])) ? "hidden" : "flex"} flex-col items-center justify-center p-2 text-center w-full h-full bg-slate-50 dark:bg-slate-800/80`}>
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">SLIDE {pageNum}</span>
+                            <span className="text-[9px] text-slate-500 line-clamp-1">{sec.title}</span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1097,7 +1190,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
               onClick={handleCloseAiPanel}
             />
           )}
-          <aside className={`${effectiveAiChatOpen ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full sm:static sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
+          <aside className={`${effectiveAiChatOpen ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full max-w-md sm:relative sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
             <AiAssistantModal
               isOpen={effectiveAiChatOpen}
               onClose={handleCloseAiPanel}
@@ -1208,7 +1301,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
       <input
         type="file"
         ref={pdfFileInputRef}
-        accept=".pdf"
+        accept=".pdf,.pptx,.ppt"
         className="hidden"
         onChange={handleAttachPdf}
       />
@@ -1251,47 +1344,59 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
     return (
       <div
         id={`doc-page-${pageNum}`}
-        className="w-full sm:w-[980px] max-w-full sm:max-w-[95vw] bg-[#0c121e] text-white shadow-2xl border border-slate-700/80 rounded-2xl overflow-hidden relative font-sans transition-all scroll-mt-6 mb-6 flex flex-col group"
+        className="w-full sm:w-[1020px] max-w-full sm:max-w-[96vw] bg-white dark:bg-[#181a20] text-slate-900 dark:text-white shadow-2xl border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden relative font-sans transition-all scroll-mt-6 mb-8 flex flex-col group"
       >
         {/* Top Header Row with Slide Details */}
-        <div className="bg-[#151e2e] border-b border-slate-700/80 px-4 sm:px-6 py-2.5 flex items-center justify-between text-xs text-slate-300">
+        <div className="bg-slate-50 dark:bg-[#1e222b] border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-2.5 flex items-center justify-between text-xs text-slate-700 dark:text-slate-300">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-amber-400 bg-amber-400/10 px-2.5 py-0.5 rounded border border-amber-400/25">
+            <span className="font-bold text-amber-700 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded border border-amber-500/25">
               Slide {pageNum}
             </span>
-            <span className="text-slate-500">/</span>
-            <span className="text-slate-400 font-medium">{totalPages}</span>
-            <span className="text-slate-600 hidden sm:inline">•</span>
-            <span className="text-slate-200 font-semibold truncate max-w-[200px] sm:max-w-md hidden sm:inline">
+            <span className="text-slate-400">/</span>
+            <span className="text-slate-500 font-medium">{totalPages}</span>
+            <span className="text-slate-300 dark:text-slate-600 hidden sm:inline">•</span>
+            <span className="text-slate-800 dark:text-slate-200 font-semibold truncate max-w-[200px] sm:max-w-md hidden sm:inline">
               {sec.title || docTitle}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={onToggleBookmark}
-              className="p-1.5 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer"
+              className="p-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-400 border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer shadow-xs"
               title={isBookmarked ? "Remove bookmark" : "Bookmark this slide"}
             >
-              <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "text-amber-400 fill-amber-400" : ""}`} />
+              <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "text-amber-500 fill-amber-500" : ""}`} />
               <span className="hidden sm:inline">{isBookmarked ? "Bookmarked" : "Bookmark"}</span>
             </button>
           </div>
         </div>
 
         {/* High-Resolution Slide Image (Exact Visual Copy of Original PowerPoint Slide) */}
-        <div className="w-full aspect-[16/9] relative bg-black flex items-center justify-center overflow-hidden">
+        <div className="w-full aspect-[16/9] relative bg-white dark:bg-[#0c1017] flex items-center justify-center overflow-hidden">
           <img
             src={visualSlideUrl}
             alt={`Slide ${pageNum}: ${sec.title || "PowerPoint Slide"}`}
-            className="w-full h-full object-contain select-none"
+            className="w-full h-full object-contain select-none bg-white"
             loading={pageNum <= 3 ? "eager" : "lazy"}
           />
         </div>
 
+        {/* PowerPoint Speaker Notes Section */}
+        {sec.speakerNotes && (
+          <div className="px-4 sm:px-6 py-3 bg-amber-500/5 dark:bg-amber-400/5 border-t border-slate-200 dark:border-slate-800 text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400 text-[11px] uppercase tracking-wider mb-1.5">
+              <MessageSquareQuote className="w-3.5 h-3.5" /> Slide {pageNum} Notes
+            </div>
+            <div className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap font-sans">
+              {sec.speakerNotes}
+            </div>
+          </div>
+        )}
+
         {/* Bottom Bar */}
-        <div className="px-4 sm:px-6 py-2 border-t border-slate-800 bg-[#0f1724] flex items-center justify-between text-[11px] text-slate-400 font-mono">
+        <div className="px-4 sm:px-6 py-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#161a23] flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono">
           <span className="truncate pr-2">{docTitle || `Slide ${pageNum}`}</span>
-          <span>Original PPT Slide {pageNum} of {totalPages}</span>
+          <span>PowerPoint Slide {pageNum} of ${totalPages}</span>
         </div>
       </div>
     );
@@ -1493,6 +1598,17 @@ const PresentationSlideCard: React.FC<PresentationSlideCardProps> = ({
                 </div>
               );
             })}
+          </div>
+        )}
+        {/* PowerPoint Speaker Notes / Slide Notes */}
+        {sec.speakerNotes && (
+          <div className={`mt-6 p-4 rounded-xl border ${isDarkMode ? "bg-amber-500/10 border-amber-500/20 text-slate-200" : "bg-amber-50 border-amber-200 text-slate-800"} text-xs sm:text-sm`}>
+            <div className="font-bold text-amber-500 uppercase tracking-wider text-[11px] mb-1.5 flex items-center gap-1.5">
+              <MessageSquareQuote className="w-4 h-4" /> Slide {pageNum} Notes
+            </div>
+            <div className="whitespace-pre-wrap leading-relaxed font-sans select-text">
+              {sec.speakerNotes}
+            </div>
           </div>
         )}
       </div>

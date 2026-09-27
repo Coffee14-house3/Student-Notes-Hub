@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { 
   BookOpen, HelpCircle, Search, 
   Tag, Clock, ChevronRight, Layers, FileText, ArrowRight,
-  GraduationCap, Bell, ArrowUpRight, Award, Folder, RefreshCw, CheckCircle2
+  GraduationCap, Bell, ArrowUpRight, Award, Folder, RefreshCw, CheckCircle2, Upload
 } from "lucide-react";
 import { NoteDocument, CourseAnnouncement } from "../types";
 
@@ -15,6 +15,7 @@ interface Props {
   onOpenAiTutor?: () => void;
   isStandalone?: boolean;
   onSyncWithTeacher?: () => Promise<void> | void;
+  onSwitchPortal?: (mode: "student" | "teacher") => void;
   isSyncing?: boolean;
   syncStatus?: string | null;
 }
@@ -28,6 +29,7 @@ export const StudentPortal: React.FC<Props> = ({
   onOpenAiTutor,
   isStandalone = false,
   onSyncWithTeacher,
+  onSwitchPortal,
   isSyncing = false,
   syncStatus = null
 }) => {

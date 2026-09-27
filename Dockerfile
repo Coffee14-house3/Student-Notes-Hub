@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     libreoffice-calc \
     libreoffice-writer \
+    libreoffice-core \
+    libreoffice-common \
     poppler-utils \
     librsvg2-bin \
     imagemagick \

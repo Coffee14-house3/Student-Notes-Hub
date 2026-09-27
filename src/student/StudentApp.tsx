@@ -291,30 +291,12 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
               <span>Back to Course Notes</span>
             </button>
           )}
-
-          <button
-            onClick={handleCopyShareLink}
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
-            title="Copy shareable link"
-          >
-            {copiedLink ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span className="hidden sm:inline text-emerald-400 font-semibold">Copied!</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="w-3.5 h-3.5 text-slate-400" />
-                <span className="hidden sm:inline">Share Link</span>
-              </>
-            )}
-          </button>
         </div>
       </nav>
 
       {/* Main View Area */}
       <main className="flex-1">
-        {activeView === "dashboard" || !currentDocument ? (
+        {activeView === "dashboard" ? (
           <StudentPortal
             documents={documents}
             announcements={announcements}
@@ -333,6 +315,7 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             onOpenAiTutor={() => setAiChatOpen(true)}
             isStandalone={isStandalone}
             onSyncWithTeacher={() => handleSyncWithTeacher(true)}
+            onSwitchPortal={onSwitchPortal}
             isSyncing={isSyncing}
             syncStatus={syncStatus}
           />

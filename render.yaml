@@ -1,65 +1,13 @@
 services:
-  # ============================================================================
-  # 1. Course Teacher Portal (Teacher Upload Studio & Slides Management)
-  # ============================================================================
   - type: web
-    name: course-teacher-portal
-    runtime: node
+    name: course-notes-hub
+    env: node
+    region: oregon
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
-    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORTAL_MODE
-        value: teacher
-      - key: DATA_DIR
-        value: ./data
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
-      - key: CHROMA_API_KEY
-        sync: false
-      - key: CHROMA_TENANT
-        sync: false
-      - key: CHROMA_DATABASE
-        sync: false
-
-  # ============================================================================
-  # 2. Course Student Portal (Notes Viewer, AI Study Tutor, Quizzes)
-  # ============================================================================
-  - type: web
-    name: course-student-portal
-    runtime: node
-    plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    healthCheckPath: /api/health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORTAL_MODE
-        value: student
-      - key: DATA_DIR
-        value: ./data
-      - key: TEACHER_SERVICE_URL
-        fromService:
-          type: web
-          name: course-teacher-portal
-          property: host
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
-      - key: GROQ_API_KEY
-        sync: false
-      - key: CHROMA_API_KEY
-        sync: false
-      - key: CHROMA_TENANT
-        sync: false
-      - key: CHROMA_DATABASE
-        sync: false
+      - key: PORT
+        value: 10000

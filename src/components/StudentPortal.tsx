@@ -187,27 +187,6 @@ export const StudentPortal: React.FC<Props> = ({
                 Browse verified course materials organized by <strong className="text-amber-400">Subject</strong> and <strong className="text-purple-300">Unit</strong>. Study unit-by-unit with interactive diagrams, take practice quizzes, and get instant answers with the AI Smart Tutor.
               </p>
             </div>
-
-            {/* Quick Action Controls */}
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 shrink-0">
-              <button
-                onClick={handleCopyStudentLink}
-                className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer hover:border-slate-600 shadow-sm"
-                title="Copy shareable link to student portal"
-              >
-                {copiedLink ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span className="text-emerald-400">Link Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Share2 className="w-4 h-4 text-slate-400" />
-                    <span>Share Student Link</span>
-                  </>
-                )}
-              </button>
-            </div>
           </div>
 
           {/* Quick Learning Stats */}
