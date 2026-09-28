@@ -542,6 +542,13 @@ async function startServer() {
   }, 5 * 60 * 1000);
 
   const pdfBuffers = new Map<string, Buffer>();
+  const setPdfBuffer = (key: string, val: Buffer) => {
+    if (pdfBuffers.size >= 3) {
+      const firstKey = pdfBuffers.keys().next().value;
+      if (firstKey) pdfBuffers.delete(firstKey);
+    }
+    pdfBuffers.set(key, val);
+  };
 
   // High-performance, low-memory streaming helper with HTTP Range support (Zero Heap Bloat)
   function streamFileWithRange(
@@ -1119,7 +1126,7 @@ async function startServer() {
         if (!fs.existsSync(cachedRawPdf)) {
           fs.writeFileSync(cachedRawPdf, Buffer.from(pdfBytes));
         }
-        pdfBuffers.set(docId, Buffer.from(pdfBytes));
+        setPdfBuffer(docId, Buffer.from(pdfBytes));
       } catch (pdfErr) {
         console.warn("[PPTX-RENDER] Notice generating synthetic PDF:", pdfErr);
       }
@@ -1389,7 +1396,7 @@ async function startServer() {
       if (isPdf && realIsPdf) {
         try {
           if (fileBuffer) {
-            pdfBuffers.set(docId, fileBuffer);
+            setPdfBuffer(docId, fileBuffer);
             try {
               ensureDataDir();
               fs.writeFileSync(path.join(PDF_DIR, `${docId}.pdf`), fileBuffer);
@@ -2684,7 +2691,7 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
     {
       id: "nat_vpn_gateways",
       title: "NAT Gateways & VPN Gateways in Enterprise VPC Networks",
-      matchFn: (s) => s.includes("nat") || s.includes("vpn") || s.includes("gateway") || s.includes("subnet") || s.includes("enterprise network"),
+      matchFn: (s) => (s.includes("nat") || s.includes("vpn")) && (s.includes("gateway") || s.includes("enterprise") || s.includes("private subnet")),
       points: [
         "**NAT Gateway (Network Address Translation):** Managed AWS service deployed in a Public Subnet that enables instances in Private Subnets to initiate outbound internet traffic (for OS updates, software patches, or external APIs) while blocking unsolicited inbound connections from the public internet.",
         "**Virtual Private Network (VPN) Gateway / Site-to-Site VPN:** Establishes a secure, encrypted IPsec VPN tunnel between the corporate on-premises data center and the AWS VPC, allowing hybrid enterprise networks to access cloud resources securely over the internet.",

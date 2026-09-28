@@ -13,7 +13,7 @@ services:
       - key: PORTAL_MODE
         value: teacher
       - key: NODE_OPTIONS
-        value: --max-old-space-size=400
+        value: --max-old-space-size=350
 
   - type: web
     name: course-student-portal
@@ -29,4 +29,4 @@ services:
       - key: PORTAL_MODE
         value: student
       - key: NODE_OPTIONS
-        value: --max-old-space-size=400
+        value: --max-old-space-size=350
