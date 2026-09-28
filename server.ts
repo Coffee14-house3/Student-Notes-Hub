@@ -418,7 +418,7 @@ async function startServer() {
       if (fs.existsSync(DOCS_FILE)) {
         const raw = fs.readFileSync(DOCS_FILE, "utf-8");
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           serverDocuments = parsed;
 
           // Connect any pre-generated slides to document sections
@@ -457,7 +457,7 @@ async function startServer() {
       if (fs.existsSync(ANNOUNCEMENTS_FILE)) {
         const raw = fs.readFileSync(ANNOUNCEMENTS_FILE, "utf-8");
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           serverAnnouncements = parsed;
           console.log(`[Storage] Loaded ${serverAnnouncements.length} persisted announcements from ${ANNOUNCEMENTS_FILE}`);
         }
