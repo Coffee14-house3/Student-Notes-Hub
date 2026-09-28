@@ -361,6 +361,11 @@ async function startServer() {
   // Support Render / cloud dynamic port assignment ($PORT) with fallback to 3000
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+  // Instant health check for Render uptime monitoring
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
+
   app.use(express.json({ limit: "1024mb" }));
   app.use(express.urlencoded({ limit: "1024mb", extended: true }));
 
@@ -1627,18 +1632,21 @@ Output ONLY valid JSON in this format:
 
       let slideImageUrls: string[] = [];
       if ((isPptx || isPpt || realIsPptx || realIsPpt) && savedRawFilePath && fs.existsSync(savedRawFilePath)) {
-        try {
-          slideImageUrls = await renderPptxToSlideImages(docId, savedRawFilePath);
-          if (slideImageUrls.length > 0) {
-            sections.forEach((sec, idx) => {
-              if (slideImageUrls[idx]) {
-                sec.slideImageUrl = slideImageUrls[idx];
-              }
-            });
+        // Non-blocking background slide image generation for lightning-fast uploads
+        renderPptxToSlideImages(docId, savedRawFilePath).then(urls => {
+          if (urls && urls.length > 0) {
+            const docRef = serverDocuments.find(d => d.id === docId);
+            if (docRef) {
+              docRef.slideImages = urls;
+              docRef.sections.forEach((sec: any, idx: number) => {
+                if (urls[idx]) sec.slideImageUrl = urls[idx];
+              });
+              saveDocuments();
+            }
           }
-        } catch (loErr) {
-          console.warn("[PPTX-RENDER] Failed rendering slide images:", loErr);
-        }
+        }).catch(err => {
+          console.warn("[Background Slide Render notice]:", err?.message);
+        });
       }
 
       const finalDoc = {
@@ -2674,6 +2682,17 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
   // Multi-Topic Knowledge Dictionary for 2-Mark & General Explanations
   const topicCatalog: Array<{ id: string; title: string; matchFn: (str: string) => boolean; points: string[] }> = [
     {
+      id: "nat_vpn_gateways",
+      title: "NAT Gateways & VPN Gateways in Enterprise VPC Networks",
+      matchFn: (s) => s.includes("nat") || s.includes("vpn") || s.includes("gateway") || s.includes("subnet") || s.includes("enterprise network"),
+      points: [
+        "**NAT Gateway (Network Address Translation):** Managed AWS service deployed in a Public Subnet that enables instances in Private Subnets to initiate outbound internet traffic (for OS updates, software patches, or external APIs) while blocking unsolicited inbound connections from the public internet.",
+        "**Virtual Private Network (VPN) Gateway / Site-to-Site VPN:** Establishes a secure, encrypted IPsec VPN tunnel between the corporate on-premises data center and the AWS VPC, allowing hybrid enterprise networks to access cloud resources securely over the internet.",
+        "**Extending the VPC Pattern for Enterprise Networks:** Combines Public Subnets (hosting Internet Gateways, NAT Gateways, and Load Balancers) with Private Subnets (hosting backend application servers and sensitive databases), bridged to corporate headquarters via VPN/Direct Connect gateways for hybrid enterprise architectures.",
+        "**Respect Respective Functions for Private Subnets:** Private Subnets house core enterprise business logic and sensitive customer databases. NAT Gateways provide them safe outbound internet connectivity without exposure, while VPN Gateways seamlessly integrate private subnets with on-premises corporate internal networks."
+      ]
+    },
+    {
       id: "fault_tolerance",
       title: "Fault Tolerance in AWS Cloud",
       matchFn: (s) => s.includes("fault tolerance") || s.includes("fault tolerant") || s.includes("fault-tolerant"),
@@ -2854,6 +2873,10 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
       answerText += `\n\n---\n\n### ${secNum}. 📊 Key Enterprise Benefits\n- **High Availability & Fault Tolerance:** Eliminates single points of failure across isolated Availability Zones.\n- **Auto Scaling Integration:** Integrates natively with Auto Scaling Groups (ASG).\n- **SSL/TLS Offloading:** Decrypts encrypted sessions at the load balancer level.`;
 
       return answerText;
+    }
+
+    if (singleTopic.id === "nat_vpn_gateways") {
+      return `### 🟡 Exam Answer (10 Marks Weightage — Structured Enterprise Architecture Format)\n\n**Question Topic:** How NAT Gateways and Virtual Private Network (VPN) Gateways Extend VPC Patterns for Enterprise Networks\n\n---\n\n### 1. 📌 Overview & Definition in AWS VPC\nAn **AWS Virtual Private Cloud (VPC)** isolates workloads in logically defined virtual networks. To scale this pattern for enterprise networks, **NAT Gateways** and **VPN Gateways** extend connectivity safely:\n- **NAT Gateway (Network Address Translation):** A managed AWS service deployed in public subnets enabling private subnet instances to initiate outbound internet traffic while blocking unsolicited inbound connections.\n- **VPN Gateway (Virtual Private Network / Site-to-Site VPN):** A secure gateway attached to the VPC that establishes encrypted IPsec VPN tunnels between corporate on-premises data centers and AWS.\n\n---\n\n### 2. 🛡️ Respective Functions for Private Subnets\n1. **Private Subnet Isolation:** Private subnets host sensitive application servers and databases without direct public IP addresses.\n2. **NAT Gateway Function:** Routes outbound requests (software updates, security patches, API calls) from private subnets through a public Elastic IP without exposing internal nodes to inbound internet threats.\n3. **VPN Gateway Function:** Bridges private subnets with corporate internal branch offices, enabling secure hybrid communication between on-premises mainframes and cloud microservices.\n\n---\n\n### 3. 🔄 Enterprise Architecture Integration & Routing\n1. **Public Ingress Tier:** Internet Gateways (IGW) and Application Load Balancers handle incoming external web traffic.\n2. **Outbound Internet Path:** Route tables in private subnets direct 0.0.0.0/0 traffic to the NAT Gateway.\n3. **Hybrid On-Premises Path:** Route tables direct corporate destination CIDR blocks through the Virtual Private Gateway (VGW) across encrypted IPsec tunnels.\n\n---\n\n### 4. 📊 Key Enterprise Benefits\n- **Security & Compliance:** Complete isolation of backend databases from the public internet.\n- **Hybrid Cloud Continuity:** Seamless integration between corporate data centers and AWS cloud infrastructure.\n- **High Availability:** Multi-AZ NAT Gateway deployment guarantees fault-tolerant outbound internet connectivity.`;
     }
 
     if (singleTopic.id === "types_of_cloud") {

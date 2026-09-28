@@ -6,11 +6,14 @@ services:
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORTAL_MODE
         value: teacher
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1024
 
   - type: web
     name: course-student-portal
@@ -19,8 +22,11 @@ services:
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORTAL_MODE
         value: student
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1024
