@@ -1,13 +1,16 @@
 # Production Dockerfile for Course Platform on Render / Cloud Run
 FROM node:20-bookworm-slim
 
-# Install LibreOffice, Poppler-utils (pdftoppm), and librsvg for high-fidelity PPTX rendering
+# Install LibreOffice, Python3, Poppler-utils, and librsvg for high-fidelity PPTX rendering
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     libreoffice-calc \
     libreoffice-writer \
     libreoffice-core \
     libreoffice-common \
+    python3 \
+    python3-pip \
+    python3-pil \
     poppler-utils \
     librsvg2-bin \
     imagemagick \
