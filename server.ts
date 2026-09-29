@@ -358,8 +358,8 @@ async function callGroqChat(
 
 async function startServer() {
   const app = express();
-  // Support Render / cloud dynamic port assignment ($PORT) with fallback to 3000
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  // Support Render / cloud dynamic port assignment ($PORT) with fallback to 8080
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 
   // Instant health check for Render uptime monitoring
   app.get("/api/health", (req, res) => {
@@ -2299,16 +2299,7 @@ ${ragContextText}
 
 User Question: ${prompt}`;
 
-      // 1. Try Gemini 3.6 Flash FIRST using @google/genai SDK
-      const geminiResult = await callGeminiChat(
-        systemInstruction,
-        `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}`
-      );
-      if (geminiResult?.text) {
-        return res.json({ text: geminiResult.text, provider: `Google Gemini (${geminiResult.modelUsed})` });
-      }
-
-      // 2. Try OpenRouter AI if API key is provided
+      // 1. Try OpenRouter AI if API key is provided
       const openRouterResult = await callOpenRouterChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }
@@ -2317,7 +2308,7 @@ User Question: ${prompt}`;
         return res.json({ text: openRouterResult.text, provider: `OpenRouter (${openRouterResult.modelUsed})` });
       }
 
-      // 3. Try Groq API key if available
+      // 2. Try Groq API key if available
       const groqResult = await callGroqChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }

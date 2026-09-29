@@ -29,10 +29,10 @@ COPY . .
 # Build frontend and server
 RUN npm run build
 
-# Expose port (Render sets $PORT, default 3000)
-ENV PORT=3000
+# Expose port (Render/Cloud Run sets $PORT, default 8080)
+ENV PORT=8080
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 8080
 
 # Start server
 CMD ["npm", "start"]
