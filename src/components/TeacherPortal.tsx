@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Upload, FileText, Sparkles, BookOpen, Trash2, ArrowRight, 
   CheckCircle2, FileCode, Search, HelpCircle, Layers, ShieldCheck, 
@@ -75,10 +75,19 @@ export const TeacherPortal: React.FC<Props> = ({
 }) => {
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>("false");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>("all");
-  const [selectedUnitFilter, setSelectedUnitFilter] = useState<string>("all");
-  const [viewLayout, setViewLayout] = useState<"curriculum" | "grid">("curriculum");
+  const [searchQuery, setSearchQuery] = useState<string>(() => localStorage.getItem("tp_searchQuery") || "");
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>(() => localStorage.getItem("tp_subjectFilter") || "all");
+  const [selectedUnitFilter, setSelectedUnitFilter] = useState<string>(() => localStorage.getItem("tp_unitFilter") || "all");
+  const [viewLayout, setViewLayout] = useState<"curriculum" | "grid">(() => (localStorage.getItem("tp_viewLayout") as any) || "curriculum");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("tp_searchQuery", searchQuery);
+      localStorage.setItem("tp_subjectFilter", selectedSubjectFilter);
+      localStorage.setItem("tp_unitFilter", selectedUnitFilter);
+      localStorage.setItem("tp_viewLayout", viewLayout);
+    } catch {}
+  }, [searchQuery, selectedSubjectFilter, selectedUnitFilter, viewLayout]);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [showDeleteConfirmId, setShowDeleteConfirmId] = useState<string | null>(null);
 
