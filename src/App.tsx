@@ -27,7 +27,7 @@ export default function App() {
     } catch {
       // ignore
     }
-    return "student"; // Default to student view
+    return "teacher"; // Default to teacher view
   });
 
   const [isStandalone, setIsStandalone] = useState<boolean>(false);

@@ -14,19 +14,3 @@ services:
         value: teacher
       - key: NODE_OPTIONS
         value: --max-old-space-size=350
-
-  - type: web
-    name: course-student-portal
-    env: node
-    region: oregon
-    plan: free
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    healthCheckPath: /api/health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORTAL_MODE
-        value: student
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=350
