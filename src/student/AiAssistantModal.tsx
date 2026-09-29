@@ -282,6 +282,7 @@ function parseMarkdownContent(lines: string[]) {
     | { type: "numbered"; number: string; text: string; key: number }
     | { type: "table"; headers: string[]; alignments: ("left" | "center" | "right")[]; rows: string[][]; key: number }
     | { type: "diagram"; text: string; key: number }
+    | { type: "image"; alt: string; src: string; key: number }
     | { type: "paragraph"; text: string; key: number }
   > = [];
 
@@ -386,6 +387,13 @@ function parseMarkdownContent(lines: string[]) {
 
     if (!trimmed) {
       elements.push({ type: "space", key: i });
+      i++;
+      continue;
+    }
+
+    const imgMatch = trimmed.match(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/);
+    if (imgMatch) {
+      elements.push({ type: "image", alt: imgMatch[1], src: imgMatch[2], key: i });
       i++;
       continue;
     }
@@ -498,6 +506,17 @@ const ChatMarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
                     rawCode={elem.text}
                     lang="ascii"
                   />
+                );
+              }
+
+              if (elem.type === "image") {
+                return (
+                  <div key={elem.key} className="my-3 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-950/80 border border-slate-700/80 shadow-md">
+                    <img src={elem.src} alt={elem.alt || "Slide Diagram"} className="max-h-[320px] max-w-full object-contain rounded-lg shadow-sm bg-white/5 p-1" />
+                    {elem.alt && elem.alt !== "Slide Diagram" && (
+                      <span className="text-[10px] text-slate-400 mt-1 italic text-center">{elem.alt}</span>
+                    )}
+                  </div>
                 );
               }
 

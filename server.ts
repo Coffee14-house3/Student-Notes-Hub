@@ -167,13 +167,16 @@ async function retryWithBackoff<T>(
     } catch (err: any) {
       attempt++;
       const errMsg = err?.message || String(err);
+      const isQuotaExceeded = errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("exceeded your current quota") || errMsg.includes("Quota exceeded");
       const isTransient =
-        err?.status === 503 ||
-        err?.status === 429 ||
-        errMsg.includes("503") ||
-        errMsg.includes("429") ||
-        errMsg.includes("high demand") ||
-        errMsg.includes("UNAVAILABLE");
+        !isQuotaExceeded && (
+          err?.status === 503 ||
+          err?.status === 429 ||
+          errMsg.includes("503") ||
+          errMsg.includes("429") ||
+          errMsg.includes("high demand") ||
+          errMsg.includes("UNAVAILABLE")
+        );
 
       if (attempt <= retries && isTransient) {
         const delay = baseDelayMs * Math.pow(2, attempt - 1);
@@ -258,7 +261,7 @@ async function callOpenRouterChat(
   preferredModels?: string[],
   jsonMode?: boolean
 ): Promise<{ text: string; modelUsed: string } | null> {
-  const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || "").trim();
+  const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || "sk-bl-G8Mzfl2tCk_QEMd9Oti8UO5H8NkAQfAm9IeGA-c34ZUCbAyu").trim();
   if (!apiKey) return null;
 
   const models = preferredModels || [
@@ -1888,11 +1891,25 @@ Output ONLY valid JSON in this format:
           return res.json({ documents: remote.documents, source: "remote_teacher" });
         }
       }
-      const published = serverDocuments.filter(d => d.isPublished !== false);
+      const seenTitles = new Set();
+      const uniqueDocs = serverDocuments.filter(d => {
+        const key = (d.title || "").toLowerCase().trim();
+        if (seenTitles.has(key)) return false;
+        seenTitles.add(key);
+        return true;
+      });
+      const published = uniqueDocs.filter(d => d.isPublished !== false);
       return res.json({ documents: published });
     }
 
-    return res.json({ documents: serverDocuments });
+    const seenTitlesAll = new Set();
+    const uniqueDocsAll = serverDocuments.filter(d => {
+      const key = (d.title || "").toLowerCase().trim();
+      if (seenTitlesAll.has(key)) return false;
+      seenTitlesAll.add(key);
+      return true;
+    });
+    return res.json({ documents: uniqueDocsAll });
   });
 
   // POST /api/documents (Create/Add document)
@@ -2271,6 +2288,7 @@ Output ONLY valid JSON in this format:
           selectedSections.map((s: any) => 
             `[=== PDF PAGE ${s.pageNumber} ===]\nTitle: ${s.title}\nSubtitle: ${s.subtitle || ""}\nContent:\n${s.contentMarkdown}`
           ).join("\n\n-------------------\n\n");
+        ragContextText = ragContextText.slice(0, 14000);
       }
 
       const systemInstruction = `You are an expert AI Smart Tutor and AWS Cloud Architect assisting a student with their AWS lecture notes and lab manuals using RAG.
@@ -2287,7 +2305,7 @@ EXAM MARKS & ANSWERING RULES:
 3. DIRECT & ACCURATE RAG ANSWERS: Always answer strictly using the retrieved document context. Explain cloud terms thoroughly and accurately. Do NOT add extraneous, useless, or unasked sections.
 
 4. CLEAN FORMATTING & TABLES: Use markdown headings, bold terms, bullet points, and code blocks. Whenever comparing concepts, services, tiers, or models (such as IaaS vs PaaS vs SaaS, S3 vs EBS vs EFS, etc.) or when asked for tabular summaries, always present them using standard Markdown tables with clear header rows (| Col 1 | Col 2 |) and separator rows (| --- | --- |). Provide clean, direct, accurate answers without page numbers or source file citations.
-5. ARCHITECTURAL & NETWORK DIAGRAMS: Whenever illustrating network topologies, cloud architectures, VPC subnets, peering, VPN gateways, or data flows, ALWAYS enclose the ASCII diagram inside a code block marked with \`\`\`ascii or \`\`\`text. Ensure horizontal alignment and box borders (+---+, |   |, ===, --->) are properly formatted, tidy, and bounded to a standard width (max 65-70 characters per line) so the diagram renders cleanly without wrapping.`;
+5. MANDATORY ARCHITECTURAL & NETWORK DIAGRAMS: Whenever illustrating network topologies, hybrid networking (VLANs, VPNs, VPCs), cloud architectures, VPC subnets, peering, VPN gateways, load balancing, or data flows, YOU MUST ALWAYS INCLUDE a clear, professionally formatted ASCII box diagram inside a code block marked with \`\`\`ascii or \`\`\`text. Ensure horizontal alignment and box borders (+---+, |   |, ===, --->) are properly formatted, tidy, and bounded to a standard width (max 65-70 characters per line).`;
 
       const fullPromptWithContext = `${systemInstruction}
 
@@ -2308,7 +2326,13 @@ User Question: ${prompt}`;
         return res.json({ text: openRouterResult.text, provider: `OpenRouter (${openRouterResult.modelUsed})` });
       }
 
-      // 2. Try Groq API key if available
+      // 2. Try Google Gemini AI
+      const geminiResult = await callGeminiChat(systemInstruction, fullPromptWithContext);
+      if (geminiResult?.text) {
+        return res.json({ text: geminiResult.text, provider: `Google Gemini (${geminiResult.modelUsed})` });
+      }
+
+      // 3. Try Groq API key if available
       const groqResult = await callGroqChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }
@@ -2317,7 +2341,7 @@ User Question: ${prompt}`;
         return res.json({ text: groqResult.text, provider: `Groq (${groqResult.modelUsed})` });
       }
 
-      // 3. Smart Dynamic Fallback RAG Engine (Local text extraction & search)
+      // 4. Smart Dynamic Fallback RAG Engine (Local text extraction & search)
       const markAnswer = getMarkBasedAnswer(prompt, activeDocument);
       if (markAnswer) {
         return res.json({ text: markAnswer, provider: "RAG Document Engine" });
@@ -2680,6 +2704,28 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
   // Multi-Topic Knowledge Dictionary for 2-Mark & General Explanations
   const topicCatalog: Array<{ id: string; title: string; matchFn: (str: string) => boolean; points: string[] }> = [
     {
+      id: "az_randomization_multiaz",
+      title: "AWS Availability Zone (AZ) Randomization & Multi-AZ High Availability",
+      matchFn: (s) => (s.includes("randomize") || s.includes("randomizes") || s.includes("identifier") || s.includes("az mapping")) && (s.includes("availability zone") || s.includes("multiaz") || s.includes("multi-az") || s.includes("high availability")),
+      points: [
+        "**AZ Identifier Randomization:** To ensure even distribution of infrastructure load across physical underlying data centers, AWS maps Availability Zone names (like `us-east-1a`, `us-east-1b`) *randomly* to different physical underlying data centers for each distinct AWS customer account.",
+        "**Account Independence:** This means `us-east-1a` in your AWS account may correspond to a completely different physical building than `us-east-1a` in another user's AWS account, preventing resource congestion on specific physical datacenters.",
+        "**Multi-AZ High Availability:** Launching EC2 instances across multiple isolated Availability Zones ensures that if an entire physical data center experiences a power, cooling, or network outage, application traffic automatically fails over to instances running in another AZ.",
+        "**Fault Tolerance & Business Continuity:** Combined with Elastic Load Balancing (ELB) and Auto Scaling Groups (ASG), Multi-AZ deployments guarantee 99.99%+ enterprise availability and disaster resilience."
+      ]
+    },
+    {
+      id: "highway_city_vlans_vpns_vpcs",
+      title: "VLANs, VPNs, and AWS VPCs in Hybrid Networking (Highway & City Analogy)",
+      matchFn: (s) => (s.includes("vlan") || s.includes("highway") || s.includes("city") || s.includes("analogy")) && (s.includes("vpn") || s.includes("vpc")),
+      points: [
+        "**The City Analogy (AWS VPC):** An AWS Virtual Private Cloud (VPC) is like an isolated modern planned city in the cloud. It has secure district boundaries (subnets), security checkpoints (Security Groups & NACLs), and inner roads.",
+        "**The Neighborhood Office Analogy (Campus VLAN):** A physical campus VLAN (Virtual Local Area Network) is like a secured office building or floor within your physical corporate headquarters city. It segments traffic logically over shared physical switches.",
+        "**The Highway Tunnel Analogy (VPN Gateway):** A Virtual Private Network (VPN) Gateway / Site-to-Site IPsec VPN tunnel acts as a secure, encrypted highway expressway connecting your physical campus city directly to your AWS cloud city across the public internet.",
+        "**Hybrid Networking Mapping:** Together, Campus VLANs segment local traffic, AWS VPCs isolate cloud workloads, and VPN Gateways bridge them securely into a unified hybrid enterprise ecosystem."
+      ]
+    },
+    {
       id: "nat_vpn_gateways",
       title: "NAT Gateways & VPN Gateways in Enterprise VPC Networks",
       matchFn: (s) => (s.includes("nat") || s.includes("vpn")) && (s.includes("gateway") || s.includes("enterprise") || s.includes("private subnet")),
@@ -2875,6 +2921,14 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
 
     if (singleTopic.id === "nat_vpn_gateways") {
       return `### 🟡 Exam Answer (10 Marks Weightage — Structured Enterprise Architecture Format)\n\n**Question Topic:** How NAT Gateways and Virtual Private Network (VPN) Gateways Extend VPC Patterns for Enterprise Networks\n\n---\n\n### 1. 📌 Overview & Definition in AWS VPC\nAn **AWS Virtual Private Cloud (VPC)** isolates workloads in logically defined virtual networks. To scale this pattern for enterprise networks, **NAT Gateways** and **VPN Gateways** extend connectivity safely:\n- **NAT Gateway (Network Address Translation):** A managed AWS service deployed in public subnets enabling private subnet instances to initiate outbound internet traffic while blocking unsolicited inbound connections.\n- **VPN Gateway (Virtual Private Network / Site-to-Site VPN):** A secure gateway attached to the VPC that establishes encrypted IPsec VPN tunnels between corporate on-premises data centers and AWS.\n\n---\n\n### 2. 🛡️ Respective Functions for Private Subnets\n1. **Private Subnet Isolation:** Private subnets host sensitive application servers and databases without direct public IP addresses.\n2. **NAT Gateway Function:** Routes outbound requests (software updates, security patches, API calls) from private subnets through a public Elastic IP without exposing internal nodes to inbound internet threats.\n3. **VPN Gateway Function:** Bridges private subnets with corporate internal branch offices, enabling secure hybrid communication between on-premises mainframes and cloud microservices.\n\n---\n\n### 3. 🔄 Enterprise Architecture Integration & Routing\n1. **Public Ingress Tier:** Internet Gateways (IGW) and Application Load Balancers handle incoming external web traffic.\n2. **Outbound Internet Path:** Route tables in private subnets direct 0.0.0.0/0 traffic to the NAT Gateway.\n3. **Hybrid On-Premises Path:** Route tables direct corporate destination CIDR blocks through the Virtual Private Gateway (VGW) across encrypted IPsec tunnels.\n\n---\n\n### 4. 📊 Key Enterprise Benefits\n- **Security & Compliance:** Complete isolation of backend databases from the public internet.\n- **Hybrid Cloud Continuity:** Seamless integration between corporate data centers and AWS cloud infrastructure.\n- **High Availability:** Multi-AZ NAT Gateway deployment guarantees fault-tolerant outbound internet connectivity.`;
+    }
+
+    if (singleTopic.id === "az_randomization_multiaz") {
+      return `### 🟡 Exam Answer (6 Marks Weightage — Structured High Availability Format)\n\n**Question Topic:** AWS Availability Zone (AZ) Randomization & Multi-AZ High Availability\n\n---\n\n### 1. 📌 Overview & Definition\n- **AZ Randomization:** AWS deliberately randomizes Availability Zone ID mappings (e.g., \`us-east-1a\`) across different customer AWS accounts to distribute physical infrastructure load evenly.\n- **Multi-AZ High Availability:** Deploying compute and database instances across multiple physically isolated Availability Zones to ensure uninterrupted fault tolerance.\n\n---\n\n### 2. 🔀 How AZ Randomization Works Across Accounts\n1. **Independent Mapping:** The physical data center underlying \`us-east-1a\` for your account is dynamically randomized and different from \`us-east-1a\` in another account.\n2. **Load Balancing Across Datacenters:** Prevents all customers from concentrating heavy workloads on the exact same physical facility.\n3. **Transparent Operation:** Handled automatically by AWS control planes without requiring customer configuration.\n\n---\n\n### 3. 🛡️ Why Multi-AZ Enhances High Availability\n1. **Physical Isolation:** Each AZ has independent power, cooling, and network plumbing.\n2. **Automatic Failover:** ELB and Auto Scaling route traffic away from compromised AZs instantly.\n3. **Data Replication:** Services like Amazon RDS replicate synchronous storage across AZs.\n\n---\n\n### 4. 📐 Multi-AZ Architecture Diagram\n\`\`\`text\n+--------------------------------------------------------------+\n|                        AWS Region                            |\n|  +------------------------+      +------------------------+  |\n|  | Availability Zone (AZ1)|      | Availability Zone (AZ2)|  |\n|  |                        |      |                        |  |\n|  |   [ Public Subnet ]    |      |   [ Public Subnet ]    |  |\n|  |           |            |      |           |            |  |\n|  |   [ EC2 Instance 1 ]   |      |   [ EC2 Instance 2 ]   |  |\n|  +------------------------+      +------------------------+  |\n+--------------------------------------------------------------+\n\`\`\`\n\n---\n\n### 5. 📊 Key Enterprise Benefits\n- Eliminates single points of failure.\n- Protects against natural disasters and infrastructure outages.\n- Guarantees 99.99% uptime SLAs.`;
+    }
+
+    if (singleTopic.id === "highway_city_vlans_vpns_vpcs") {
+      return `### 🟡 Exam Answer (10 Marks Weightage — Hybrid Networking & Architecture Analogy)\n\n**Question Topic:** How Physical Campus VLANs, VPNs, and AWS VPCs Map in Hybrid Networking (Highway & City Analogy)\n\n---\n\n### 1. 📌 Conceptual Mapping & Overview\nIn hybrid enterprise cloud architectures, physical campus networks and cloud environments must communicate securely. We can understand their respective roles using the **Highway and City Analogy**:\n- **Campus VLANs (Office Floors):** Logical segmentation inside your physical headquarters.\n- **AWS VPCs (Isolated Cloud Cities):** Secure, user-defined virtual network boundaries in AWS.\n- **VPN Gateways (Encrypted Highway Tunnels):** Secure tunnels connecting the physical city to the cloud city.\n\n---\n\n### 2. 🚗 The Highway & City Analogy Breakdown\n1. **The Physical Campus & VLANs (The Local Office Building):** VLANs divide a single physical local area network into isolated logical compartments (e.g., HR VLAN vs. Engineering VLAN) using switch port tagging.\n2. **The AWS VPC (The Gated Cloud City):** An AWS VPC is an isolated virtual city in the cloud with custom CIDR block boundaries, Public Subnets (city center with Internet Gateway access), and Private Subnets (restricted residential/database districts).\n3. **The VPN Gateway (The Secure Highway Expressway):** Because physical headquarters and AWS VPCs are miles apart, traffic traversing the public internet must be encrypted. A Site-to-Site VPN Gateway creates a secure IPsec tunnel (encrypted highway) bridging both environments.\n\n---\n\n### 3. 📐 Hybrid Architecture ASCII Diagram\n\`\`\`text\n+-----------------------+              Encrypted IPsec Tunnel             +-----------------------+\n| On-Premises Campus    |                 (Highway Expressway)            | AWS Cloud (VPC City)  |\n|                       |         ==============================>         |                       | \n|  [ VLAN 10 ] (HR)     |                                                 |  [ Public Subnet ]    | \n|  [ VLAN 20 ] (Eng)    |-----> [ On-Prem Router ] ---> [ VPN Gateway ] --|-----> [ NAT Gateway ] |\n|                       |                                                 |  [ Private Subnet ]   |\n+-----------------------+                                                 +-----------------------+\n\`\`\`\n\n---\n\n### 4. 📊 Exam Summary & Key Takeaways\n- **Isolation:** VLANs provide layer-2 local segmentation; VPCs provide layer-3 virtual network isolation.\n- **Connectivity:** VPN Gateways bridge on-premises networks to AWS cloud environments securely over encrypted tunnels.\n- **Enterprise Security:** Combines physical boundary controls with cloud security groups and network access control lists (NACLs).`;
     }
 
     if (singleTopic.id === "types_of_cloud") {
