@@ -93,16 +93,21 @@ export const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean
         }
 
         // Markdown image support (e.g. diagrams and figures extracted from slides)
-        const imgMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+        const imgMatch = trimmed.match(/!\[([^\]]*)\]\((data:image\/[^)]+)\)/);
         if (imgMatch) {
           const alt = imgMatch[1];
           const src = imgMatch[2];
+          const parts = trimmed.split(imgMatch[0]);
           return (
-            <div key={idx} className="my-4 flex flex-col items-center justify-center p-2 rounded-xl bg-slate-900/60 border border-slate-700/60 shadow-md">
-              <img src={src} alt={alt || "Slide Figure"} className="max-h-[380px] max-w-full object-contain rounded-lg shadow-sm" />
-              {alt && alt !== "Slide Diagram" && alt !== "Slide Figure" && (
-                <span className="text-[11px] text-slate-400 mt-1 italic text-center">{alt}</span>
-              )}
+            <div key={idx} className="my-3">
+              {parts[0] && <p className={`my-1 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(parts[0], isDark)}</p>}
+              <div className="my-3 flex flex-col items-center justify-center p-3 rounded-xl bg-slate-900/80 border border-slate-700 shadow-md">
+                <img src={src} alt={alt || "Slide Figure"} className="max-h-[400px] max-w-full object-contain rounded-lg shadow-sm bg-white/5 p-2" />
+                {alt && alt !== "Slide Diagram" && alt !== "Slide Figure" && (
+                  <span className="text-[11px] text-slate-400 mt-1.5 italic text-center">{alt}</span>
+                )}
+              </div>
+              {parts[1] && <p className={`my-1 leading-relaxed ${isDark ? "text-slate-200" : "text-slate-800"}`}>{renderBoldText(parts[1], isDark)}</p>}
             </div>
           );
         }
