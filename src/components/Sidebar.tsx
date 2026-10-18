@@ -42,23 +42,6 @@ export const Sidebar: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* Quick Navigation Buttons */}
-      <div className="space-y-1">
-        <button
-          onClick={() => setActiveView("quiz")}
-          className={`w-full text-left p-2.5 rounded-lg flex items-center justify-between font-semibold transition-colors ${
-            activeView === "quiz"
-              ? "bg-amber-500 text-slate-950 font-bold"
-              : "bg-white dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:border-amber-500"
-          }`}
-        >
-          <span className="flex items-center gap-2">
-            <HelpCircle className="w-4 h-4" /> Practice Quiz
-          </span>
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
       {/* Table of Contents for Notes */}
       <div className="space-y-4">
         {notes.map((note) => (

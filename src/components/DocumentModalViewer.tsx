@@ -22,6 +22,19 @@ import { DocumentMergeModal } from "./DocumentMergeModal";
 import { TextToSpeechPlayer } from "./TextToSpeechPlayer";
 import { DocumentOutlineDrawer } from "./DocumentOutlineDrawer";
 import { PptReader } from "./PptReader";
+import { apiFetch, apiUrl } from "../utils/apiClient";
+
+function getDriveEmbedUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  if (url.includes("/preview") || url.includes("/embed")) return url;
+  const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return `https://drive.google.com/file/d/${fileMatch[1]}/preview`;
+  const docMatch = url.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+  if (docMatch) return `https://docs.google.com/document/d/${docMatch[1]}/preview`;
+  const presMatch = url.match(/\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+  if (presMatch) return `https://docs.google.com/presentation/d/${presMatch[1]}/embed`;
+  return url;
+}
 
 interface Props {
   notes?: NoteDocument[];
@@ -211,7 +224,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [showQuizModal, setShowQuizModal] = useState<boolean>(false);
   const [isContinuousScroll, setIsContinuousScroll] = useState<boolean>(true);
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"pdf" | "notes" | "split" | "ppt">("pdf");
+  const [viewMode, setViewMode] = useState<"pdf" | "notes" | "split" | "ppt" | "drive-sandbox">("pdf");
   const [showFileActionsMenu, setShowFileActionsMenu] = useState<boolean>(false);
   const [showSummaryModal, setShowSummaryModal] = useState<boolean>(false);
   const [showRenameModal, setShowRenameModal] = useState<boolean>(false);
@@ -219,6 +232,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
   const [showMergeModal, setShowMergeModal] = useState<boolean>(false);
   const [showTtsPlayer, setShowTtsPlayer] = useState<boolean>(false);
   const [showOutlineDrawer, setShowOutlineDrawer] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
   const pageContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfFileInputRef = useRef<HTMLInputElement>(null);
@@ -239,7 +253,7 @@ export const DocumentModalViewer: React.FC<Props> = ({
       });
 
       const isPptx = file.name.toLowerCase().endsWith(".pptx") || file.name.toLowerCase().endsWith(".ppt");
-      const res = await fetch("/api/parse-document", {
+      const res = await apiFetch("/api/parse-document", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -481,15 +495,24 @@ export const DocumentModalViewer: React.FC<Props> = ({
 
   const [slideDeckTheme, setSlideDeckTheme] = useState<"dark" | "light">("dark");
 
+  const isGoogleDriveDoc = Boolean(
+    activeDoc?.fileFormat === "google-drive" ||
+    activeDoc?.originalFileUrl?.includes("google.com") ||
+    activeDoc?.downloadUrl?.includes("google.com") ||
+    Boolean(getDriveEmbedUrl(activeDoc?.originalFileUrl || activeDoc?.downloadUrl))
+  );
+
   useEffect(() => {
-    if (isPptxDoc) {
+    if (isGoogleDriveDoc) {
+      setViewMode("drive-sandbox");
+    } else if (isPptxDoc) {
       setViewMode("ppt");
     } else if (activeDoc?.pdfUrl || activeDoc?.pdfDataUrl) {
       setViewMode("pdf");
     } else {
       setViewMode("notes");
     }
-  }, [activeView, isPptxDoc, activeDoc?.pdfUrl, activeDoc?.pdfDataUrl]);
+  }, [activeView, isGoogleDriveDoc, isPptxDoc, activeDoc?.pdfUrl, activeDoc?.pdfDataUrl]);
 
   const handleCopyCode = (codeText: string, key: string) => {
     navigator.clipboard.writeText(codeText);
@@ -663,13 +686,13 @@ export const DocumentModalViewer: React.FC<Props> = ({
           />
         </div>
         <>
-          {effectiveAiChatOpen && (
+          {effectiveAiChatOpen && viewMode !== "drive-sandbox" && (
             <div 
               className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 sm:hidden"
               onClick={handleCloseAiPanel}
             />
           )}
-          <aside className={`${effectiveAiChatOpen ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full max-w-md sm:relative sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
+          <aside className={`${effectiveAiChatOpen && viewMode !== "drive-sandbox" ? "flex" : "hidden"} fixed inset-y-0 right-0 z-50 w-full max-w-md sm:relative sm:z-20 sm:w-[380px] md:w-[420px] lg:w-[460px] xl:w-[500px] border-l border-[#3c3c3c] bg-white dark:bg-slate-900 shrink-0 h-full flex-col shadow-2xl transition-all`}>
             <AiAssistantModal
               isOpen={effectiveAiChatOpen}
               onClose={handleCloseAiPanel}
@@ -886,6 +909,21 @@ export const DocumentModalViewer: React.FC<Props> = ({
             </a>
           )}
 
+          {(activeDoc?.originalFileUrl || activeDoc?.downloadUrl) && (
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("drive-sandbox");
+                if (!effectiveAiChatOpen) handleToggleAiPanel();
+              }}
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-extrabold transition-all shadow-md bg-purple-600 hover:bg-purple-500 text-white cursor-pointer"
+              title="Open Google Drive & RAG Study Sandbox with notes and live AI chat"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Google Drive Sandbox</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleToggleAiPanel}
@@ -899,6 +937,19 @@ export const DocumentModalViewer: React.FC<Props> = ({
             <Sparkles className="w-3.5 h-3.5" />
             <span>Ask AI</span>
           </button>
+
+          {/* Delete Document Button */}
+          {Boolean(onDeleteDocument && singleDoc) && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md bg-rose-950/40 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-800/60 hover:border-rose-500 cursor-pointer"
+              title="Permanently Delete Note and Remove from ChromaDB"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          )}
 
           {/* Close Document Viewer Button */}
           <button
@@ -1058,7 +1109,67 @@ export const DocumentModalViewer: React.FC<Props> = ({
             (viewMode === "pdf" || isPptxDoc) ? "overflow-hidden p-0" : "overflow-auto p-2 sm:p-8 flex justify-center items-start"
           } bg-[#e5e7eb] dark:bg-[#1a1a1e] relative`}
         >
-          {activeView === "quiz" ? (
+          {viewMode === "drive-sandbox" ? (
+            <div className="w-full h-full flex flex-col md:flex-row bg-[#1e1e1e] overflow-hidden relative">
+              {/* Left: Live Google Drive Note Viewer / Iframe Sandbox */}
+              <div className="flex-1 flex flex-col bg-slate-950 border-r border-[#3c3c3c] overflow-hidden">
+                <div className="bg-[#2d2d32] px-4 py-2.5 border-b border-[#3c3c3c] flex items-center justify-between text-xs text-slate-300">
+                  <span className="font-bold flex items-center gap-1.5 text-amber-400">
+                    <ExternalLink className="w-4 h-4" /> Google Drive Notes Sandbox
+                  </span>
+                  <a
+                    href={activeDoc?.originalFileUrl || activeDoc?.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1 bg-amber-500 text-slate-950 font-bold rounded-lg hover:bg-amber-400 transition-colors shadow-sm"
+                  >
+                    Open in New Tab ↗
+                  </a>
+                </div>
+                <div className="flex-1 w-full h-full bg-slate-900 relative">
+                  {(() => {
+                    const embedUrl = getDriveEmbedUrl(activeDoc?.originalFileUrl || activeDoc?.downloadUrl);
+                    return embedUrl ? (
+                      <iframe
+                        src={embedUrl}
+                        className="w-full h-full border-0"
+                        title="Google Drive Document Preview"
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                        No preview URL available for this document.
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Right: RAG Application Chat Panel */}
+              <div className="w-full md:w-[420px] lg:w-[480px] bg-[#1e1e1e] border-l border-[#3c3c3c] flex flex-col shadow-2xl z-20">
+                <div className="bg-[#2d2d32] px-4 py-2.5 border-b border-[#3c3c3c] flex items-center justify-between text-xs font-bold text-white">
+                  <span className="flex items-center gap-1.5 text-amber-400">
+                    <Sparkles className="w-4 h-4" /> RAG Application AI Tutor (Notes Q&A)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("notes")}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold cursor-pointer"
+                  >
+                    Switch to Notes Reader
+                  </button>
+                </div>
+                <div className="flex-1 overflow-hidden flex flex-col">
+                  <AiAssistantModal
+                    isOpen={true}
+                    onClose={() => setViewMode("notes")}
+                    contextText={activeDoc ? (activeDoc.sections || []).map(s => `${s.title}: ${s.contentMarkdown}`).join("\n\n") : ""}
+                    activeDocument={activeDoc}
+                    isEmbedded={true}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : activeView === "quiz" ? (
             <div className="w-full max-w-3xl my-6">
               {/* Quiz view handled inside main container */}
             </div>
@@ -1282,6 +1393,58 @@ export const DocumentModalViewer: React.FC<Props> = ({
         currentPage={currentPage}
         onSelectPage={(p) => setCurrentPage(p)}
       />
+
+      {/* Permanently Delete Document Confirmation Modal */}
+      {showDeleteModal && singleDoc && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-900/50 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-2xl bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Permanently Delete Note?</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  This note will be permanently erased from disk storage and all vector embeddings will be completely removed from ChromaDB.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-1.5">
+              <div className="font-bold text-rose-300 truncate">
+                {singleDoc.title}
+              </div>
+              <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                <span>{singleDoc.subject || "Subject"} • {singleDoc.unit || "Unit"}</span>
+                <span className="font-mono text-slate-500">{singleDoc.sections?.length || singleDoc.pageCount || 1} pages</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = singleDoc.id;
+                  setShowDeleteModal(false);
+                  if (onClose) onClose();
+                  if (onDeleteDocument) onDeleteDocument(id);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Permanently Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hidden File Inputs for Opening / Adding Document & Attaching Original PDF */}
       <input

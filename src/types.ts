@@ -80,7 +80,7 @@ export interface NoteDocument {
   pdfDataUrl?: string;
   slideImages?: string[];
   fileType?: string;
-  fileFormat?: "pdf" | "docx" | "doc" | "pptx" | "ppt" | "markdown" | "code" | "text";
+  fileFormat?: "pdf" | "docx" | "doc" | "pptx" | "ppt" | "markdown" | "code" | "text" | "google-drive";
   subject?: string;
   unit?: string;
   unitNumber?: number;

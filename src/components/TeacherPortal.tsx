@@ -10,7 +10,7 @@ import {
   RotateCcw
 } from "lucide-react";
 import { NoteDocument, NoteSection, CourseAnnouncement } from "../types";
-import { AutoScalingStorageHub } from "./AutoScalingStorageHub";
+import { apiFetch, apiUrl } from "../utils/apiClient";
 
 interface Props {
   documents: NoteDocument[];
@@ -28,6 +28,17 @@ interface Props {
       isPublished?: boolean 
     }
   ) => Promise<void>;
+  onImportGoogleLink?: (payload: {
+    url: string;
+    title?: string;
+    subject?: string;
+    unit?: string;
+    unitTitle?: string;
+    courseCode?: string;
+    uploadedBy?: string;
+    notesSummary?: string;
+  }) => Promise<any>;
+  onAddDocument?: (doc: NoteDocument) => void;
   onLoadSampleDocument: (sampleType: "pdf" | "code" | "markdown" | "docx" | "pptx") => void;
   onSelectDocument: (docId: string, openAiChat?: boolean) => void;
   onOpenQuiz?: (docId: string) => void;
@@ -57,6 +68,8 @@ export const TeacherPortal: React.FC<Props> = ({
   documents,
   announcements,
   onUploadDocument,
+  onImportGoogleLink,
+  onAddDocument,
   onLoadSampleDocument,
   onSelectDocument,
   onOpenQuiz,
@@ -107,6 +120,70 @@ export const TeacherPortal: React.FC<Props> = ({
   const [uploadPercent, setUploadPercent] = useState<number>(0);
   const [uploadStage, setUploadStage] = useState<string>("");
   const [uploadSuccessMessage, setUploadSuccessMessage] = useState<string | null>(null);
+
+  // Google Drive / Google Link Importer State
+  const [gdriveLink, setGdriveLink] = useState<string>("");
+  const [gdriveTitle, setGdriveTitle] = useState<string>("");
+  const [gdriveSummary, setGdriveSummary] = useState<string>("");
+  const [gdriveImporting, setGdriveImporting] = useState<boolean>(false);
+  const [gdriveSuccess, setGdriveSuccess] = useState<string | null>(null);
+  const [gdriveError, setGdriveError] = useState<string | null>(null);
+
+  const handleGdriveImport = async () => {
+    if (!gdriveLink.trim()) return;
+    setGdriveImporting(true);
+    setGdriveError(null);
+    setGdriveSuccess(null);
+    try {
+      const url = gdriveLink.trim();
+      const title = gdriveTitle.trim() || undefined;
+      const payload = {
+        url,
+        title,
+        subject: effectiveSubject,
+        unit: effectiveUnit,
+        unitTitle: unitTitleInput.trim() || undefined,
+        courseCode: courseCodeInput.trim() || undefined,
+        uploadedBy: instructorName.trim() || "Instructor",
+        notesSummary: gdriveSummary.trim() || undefined
+      };
+
+      let createdDoc: NoteDocument | null = null;
+      let chunksCount = 0;
+
+      if (onImportGoogleLink) {
+        const res = await onImportGoogleLink(payload);
+        createdDoc = res?.document;
+        chunksCount = res?.chunksIndexed || 0;
+      } else {
+        const res = await apiFetch("/api/parse-google-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to process Google Link");
+        }
+        const data = await res.json();
+        createdDoc = data.document;
+        chunksCount = data.chunksIndexed || 0;
+        if (createdDoc && onAddDocument) {
+          onAddDocument(createdDoc);
+        }
+      }
+
+      setGdriveLink("");
+      setGdriveTitle("");
+      setGdriveSummary("");
+      setGdriveSuccess(`✓ "${createdDoc?.title || "Note"}" successfully imported & indexed in ChromaDB Cloud (${chunksCount} semantic vector chunks). Available to all 16 students!`);
+      setTimeout(() => setGdriveSuccess(null), 8000);
+    } catch (err: any) {
+      setGdriveError(err?.message || "Failed to import Google Link");
+    } finally {
+      setGdriveImporting(false);
+    }
+  };
 
   const effectiveUploading = isUploading || localUploading;
   const effectiveUploadError = uploadError || localUploadError;
@@ -541,8 +618,6 @@ export const TeacherPortal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Autonomous Elastic Storage & Capacity Auto-Scaler Hub */}
-        <AutoScalingStorageHub refreshTrigger={documents.length} />
 
         {/* Upload Studio Card (Drag & Drop + Subject/Unit Form) */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
@@ -552,13 +627,7 @@ export const TeacherPortal: React.FC<Props> = ({
                 <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Upload className="w-5 h-5 text-amber-400" /> Upload Course Material (PDF, DOCX, PPT)
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-emerald-400" /> Auto-Scaling Stream Ready
-                </span>
               </div>
-              <p className="text-xs text-slate-400">
-                Upload PDF lecture notes, Word documents (.docx, .doc), PowerPoint presentations (.pptx, .ppt), code, or markdown. Storage tier and stream buffers scale up dynamically as large files are ingested.
-              </p>
             </div>
           </div>
 
@@ -655,8 +724,8 @@ export const TeacherPortal: React.FC<Props> = ({
                       PDF, Word (.docx, .doc), PowerPoint (.pptx, .ppt), Code
                     </div>
                     <div className="pt-1.5 flex items-center justify-center">
-                      <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-300 font-semibold flex items-center gap-1">
-                        <Zap className="w-3 h-3 text-amber-400" /> Auto-Scales up to 1.0 GB per upload
+                      <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-[10px] text-slate-300 font-semibold">
+                        Max file size: 1.0 GB
                       </span>
                     </div>
                   </div>
@@ -917,6 +986,96 @@ export const TeacherPortal: React.FC<Props> = ({
               </div>
             </div>
 
+          </div>
+        </div>
+
+        {/* Google Drive / Google Docs / Slides Link Importer Card */}
+        <div className="bg-slate-900/90 border border-indigo-900/40 rounded-3xl p-6 sm:p-8 shadow-xl space-y-5">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-indigo-400" />
+              <h3 className="font-bold text-white text-base">🔗 Upload Course Notes via Google Link</h3>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-[11px] font-semibold">
+              Docs • Drive PDF • Slides • Sheets
+            </span>
+          </div>
+
+
+          {gdriveSuccess && (
+            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2.5 shadow-md animate-fadeIn">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{gdriveSuccess}</span>
+            </div>
+          )}
+
+          {gdriveError && (
+            <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2.5 shadow-md animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="font-semibold">{gdriveError}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-400">Document Title</label>
+              <input
+                type="text"
+                value={gdriveTitle}
+                onChange={(e) => setGdriveTitle(e.target.value)}
+                placeholder="e.g. Unit 3 Cloud Architecture & Security"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-400">Google Public Share URL</label>
+              <input
+                type="text"
+                value={gdriveLink}
+                onChange={(e) => setGdriveLink(e.target.value)}
+                placeholder="https://docs.google.com/document/d/... or drive.google.com/file/d/..."
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-400 flex items-center justify-between">
+              <span>Optional Key Takeaways / Note Summary (Indexed for Student AI Tutor & Quizzes)</span>
+              <span className="text-[10px] text-slate-500">Public or Private Docs</span>
+            </label>
+            <textarea
+              rows={2}
+              value={gdriveSummary}
+              onChange={(e) => setGdriveSummary(e.target.value)}
+              placeholder="e.g. Topics covered: IAM Policies, VPC Peering, S3 Bucket Encryption, and Auto-Scaling groups."
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 flex-wrap gap-3">
+            <div className="text-[11px] text-slate-400">
+              Assigned to: <span className="text-indigo-300 font-semibold">{effectiveSubject}</span> &gt; <span className="text-amber-400 font-semibold">{effectiveUnit}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGdriveImport}
+              disabled={gdriveImporting || !gdriveLink.trim()}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 transition-all shadow-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {gdriveImporting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                  <span>Syncing & Indexing in ChromaDB...</span>
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="w-4 h-4" />
+                  <span>Upload & Index Google Note</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
@@ -1504,9 +1663,9 @@ export const TeacherPortal: React.FC<Props> = ({
                                             <Copy className="w-3.5 h-3.5" />
                                           </button>
                                           <button
-                                            onClick={() => onDeleteDocument(doc.id)}
+                                            onClick={() => setShowDeleteConfirmId(doc.id)}
                                             className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                                            title="Delete Note"
+                                            title="Permanently Delete Note and Remove from ChromaDB"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
@@ -1674,9 +1833,9 @@ export const TeacherPortal: React.FC<Props> = ({
                           <Copy className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => onDeleteDocument(doc.id)}
+                          onClick={() => setShowDeleteConfirmId(doc.id)}
                           className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                          title="Delete Note"
+                          title="Permanently Delete Note and Remove from ChromaDB"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1833,6 +1992,62 @@ export const TeacherPortal: React.FC<Props> = ({
                 className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold cursor-pointer"
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Single Document Permanently Modal */}
+      {showDeleteConfirmId && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-900/50 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-2xl bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Permanently Delete Note?</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  This note will be permanently erased from disk storage and all vector embeddings will be completely removed from ChromaDB.
+                </p>
+              </div>
+            </div>
+
+            {(() => {
+              const docToDelete = documents.find(d => d.id === showDeleteConfirmId);
+              return docToDelete ? (
+                <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-1.5">
+                  <div className="font-bold text-rose-300 truncate">
+                    {docToDelete.title}
+                  </div>
+                  <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>{docToDelete.subject || "Subject"} • {docToDelete.unit || "Unit"}</span>
+                    <span className="font-mono text-slate-500">{docToDelete.sections?.length || docToDelete.pageCount || 1} pages</span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmId(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = showDeleteConfirmId;
+                  setShowDeleteConfirmId(null);
+                  if (id) onDeleteDocument(id);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Permanently Delete</span>
               </button>
             </div>
           </div>

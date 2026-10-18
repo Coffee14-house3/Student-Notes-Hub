@@ -6,7 +6,9 @@ import { AiAssistantModal } from "../components/AiAssistantModal";
 import { DocumentMergeModal } from "./DocumentMergeModal";
 import { DocumentRenameModal } from "./DocumentRenameModal";
 import { DocumentDetailsModal } from "./DocumentDetailsModal";
-import { Layers, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { MicroArchitectureModal } from "../components/MicroArchitectureModal";
+import { Layers, ArrowLeft, Eye, EyeOff, Server, GraduationCap, Cpu, Globe } from "lucide-react";
+import { apiFetch, getBackendUrl, isStaticHosting } from "../utils/apiClient";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -14,7 +16,8 @@ import {
   saveDocumentsToStorage,
   loadAnnouncementsFromStorage,
   saveAnnouncementsToStorage,
-  syncDocumentsWithServer
+  syncDocumentsWithServer,
+  permanentlyDeleteDocumentFromStorage
 } from "../utils/documentStorage";
 
 interface Props {
@@ -24,6 +27,7 @@ interface Props {
 
 export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPortal }) => {
   const [activeView, setActiveView] = useState<string>("dashboard");
+  const [isMicroArchOpen, setIsMicroArchOpen] = useState<boolean>(false);
   const isInitializedRef = useRef<boolean>(false);
 
   // Documents state initialized with cached local data for instant 0ms reload
@@ -62,12 +66,12 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
       // 2. Fetch server documents and perform smart bi-directional sync
       try {
-        const res = await fetch("/api/documents?role=all");
+        const res = await apiFetch("/api/documents?role=all");
         if (res.ok) {
           const data = await res.json();
           const serverDocs = Array.isArray(data.documents) ? data.documents : [];
           const merged = await syncDocumentsWithServer(serverDocs, "teacher");
-          if (isMounted && merged.length > 0) {
+          if (isMounted) {
             setDocuments(merged);
           }
         }
@@ -91,7 +95,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
         setAnnouncements(local);
       }
       try {
-        const res = await fetch("/api/announcements");
+        const res = await apiFetch("/api/announcements");
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.announcements) && data.announcements.length > 0) {
@@ -157,7 +161,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           isPublished: String(metadata?.isPublished !== false)
         });
 
-        const res = await fetch(`/api/upload-stream?${queryParams.toString()}`, {
+        const res = await apiFetch(`/api/upload-stream?${queryParams.toString()}`, {
           method: "POST",
           body: file
         });
@@ -192,7 +196,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           isPublished: metadata?.isPublished
         };
 
-        const res = await fetch("/api/parse-document", {
+        const res = await apiFetch("/api/parse-document", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -219,6 +223,43 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     }
   };
 
+  // Dedicated Google Link Importer (Docs, Drive PDF, Slides, Sheets)
+  const handleImportGoogleLink = async (payload: {
+    url: string;
+    title?: string;
+    subject?: string;
+    unit?: string;
+    unitTitle?: string;
+    courseCode?: string;
+    uploadedBy?: string;
+    notesSummary?: string;
+  }) => {
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      const res = await apiFetch("/api/parse-google-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to parse Google Link");
+      }
+      const data = await res.json();
+      if (data.document) {
+        setDocuments(prev => [data.document, ...prev.filter(d => d.id !== data.document.id)]);
+      }
+      return data;
+    } catch (err: any) {
+      const msg = err?.message || "Failed to import Google Link";
+      setUploadError(msg);
+      throw err;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // Rename / Edit Metadata Handler
   const handleRenameDocument = async (
     docId: string, 
@@ -230,7 +271,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     courseCode?: string
   ) => {
     try {
-      await fetch(`/api/documents/${docId}`, {
+      await apiFetch(`/api/documents/${docId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -316,25 +357,36 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     };
 
     setDocuments(prev => [mergedDoc, ...prev]);
-    fetch("/api/documents", {
+    apiFetch("/api/documents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(mergedDoc)
     }).catch(err => console.warn("[TeacherApp] Failed to save merged doc to server:", err));
   };
 
-  // Delete Document
+  // Delete Document Permanently from storage and ChromaDB
   const handleDeleteDocument = async (docId: string) => {
-    try {
-      await fetch(`/api/documents/${docId}`, { method: "DELETE" });
-    } catch {
-      // ignore
-    }
+    // 1. Immediately purge from local client storage (IndexedDB & localStorage tombstone)
+    await permanentlyDeleteDocumentFromStorage(docId);
+
+    // 2. Optimistically update local React state
     const updated = documents.filter(d => d.id !== docId);
     setDocuments(updated);
-    await saveDocumentsToStorage(updated);
+    if (activeView === docId) setActiveView("dashboard");
+
+    // 3. Call server DELETE endpoint to delete files from disk and purge vectors from ChromaDB
     try {
-      await fetch("/api/documents/sync", {
+      const res = await apiFetch(`/api/documents/${docId}`, { method: "DELETE" });
+      if (res.ok) {
+        console.log(`[TeacherApp] Document ${docId} permanently deleted from disk and removed from ChromaDB.`);
+      }
+    } catch (err) {
+      console.warn("[TeacherApp] Network error during document delete:", err);
+    }
+
+    // 4. Authoritatively sync with server
+    try {
+      await apiFetch("/api/documents/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documents: updated, overwrite: true })
@@ -342,7 +394,20 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     } catch {
       // ignore
     }
-    if (activeView === docId) setActiveView("dashboard");
+  };
+
+  // Clear All Documents Permanently
+  const handleClearAllDocuments = async () => {
+    for (const d of documents) {
+      await permanentlyDeleteDocumentFromStorage(d.id);
+    }
+    setDocuments([]);
+    setActiveView("dashboard");
+    try {
+      await apiFetch("/api/documents/clear-all", { method: "POST" });
+    } catch {
+      // ignore
+    }
   };
 
   // Toggle Publish
@@ -350,7 +415,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     const doc = documents.find(d => d.id === docId);
     const newStatus = doc?.isPublished === false ? true : false;
     try {
-      await fetch(`/api/documents/${docId}/publish`, {
+      await apiFetch(`/api/documents/${docId}/publish`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isPublished: newStatus })
@@ -371,7 +436,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
       date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })
     };
     try {
-      await fetch("/api/announcements", {
+      await apiFetch("/api/announcements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newAnn)
@@ -384,7 +449,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
   const handleDeleteAnnouncement = async (annId: string) => {
     try {
-      await fetch(`/api/announcements/${annId}`, { method: "DELETE" });
+      await apiFetch(`/api/announcements/${annId}`, { method: "DELETE" });
     } catch {
       // ignore
     }
@@ -397,7 +462,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-purple-500/30 selection:text-purple-200">
       
       {/* Top Teacher Studio Navigation Bar */}
-      <nav className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-purple-900/30 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+      <nav className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-purple-900/30 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-3 text-xs flex-wrap">
         
         {/* Left: Brand Identity */}
         <div className="flex items-center gap-2.5">
@@ -405,15 +470,37 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             <Layers className="w-4 h-4" />
           </div>
           <div>
-            <span className="font-extrabold text-sm text-white tracking-tight">Teacher & Instructor Studio</span>
-            <span className="hidden sm:inline text-[10px] text-purple-300/80 ml-2 border-l border-purple-900/40 pl-2">
-              Curriculum & Vector Indexing Management
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-sm text-white tracking-tight">Teacher & Instructor Studio</span>
+              <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold">
+                MCA-204
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+
+          {/* Switch to Student Portal */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onSwitchPortal) {
+                onSwitchPortal("student");
+              } else {
+                const url = new URL(window.location.href);
+                url.searchParams.set("portal", "student");
+                window.location.href = url.toString();
+              }
+            }}
+            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+            title="Preview verified student reader for 16 students"
+          >
+            <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
+            <span>{isStandalone ? "Preview Student View" : "Student Portal (16 Students)"}</span>
+          </button>
+
           {activeView !== "dashboard" && (
             <button
               onClick={() => setActiveView("dashboard")}
@@ -433,12 +520,15 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             documents={documents}
             announcements={announcements}
             onUploadDocument={handleUploadDocument}
+            onImportGoogleLink={handleImportGoogleLink}
+            onAddDocument={(newDoc) => setDocuments(prev => [newDoc, ...prev.filter(d => d.id !== newDoc.id)])}
             onLoadSampleDocument={() => {}}
             onSelectDocument={(docId) => setActiveView(docId)}
             onRenameDocument={handleRenameDocument}
             onDuplicateDocument={handleDuplicateDocument}
             onMergeDocuments={handleMergeDocuments}
             onDeleteDocument={handleDeleteDocument}
+            onRemoveUpdatedNotes={handleClearAllDocuments}
             onTogglePublishDocument={handleTogglePublishDocument}
             onCreateAnnouncement={handleCreateAnnouncement}
             onDeleteAnnouncement={handleDeleteAnnouncement}
@@ -464,6 +554,7 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             activeView={activeView}
             setActiveView={(docId) => setActiveView(docId)}
             onSelectDocument={(docId) => setActiveView(docId)}
+            onDeleteDocument={handleDeleteDocument}
             readingSettings={readingSettings}
             onUpdateSettings={setReadingSettings}
             bookmarks={bookmarks}
@@ -477,6 +568,22 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           />
         )}
       </main>
+
+      {/* Micro-Architecture Modal for GitHub Pages & Render */}
+      <MicroArchitectureModal
+        isOpen={isMicroArchOpen}
+        onClose={() => setIsMicroArchOpen(false)}
+        onBackendUrlChanged={() => {
+          apiFetch("/api/documents?role=all")
+            .then(res => res.json())
+            .then(data => {
+              if (Array.isArray(data.documents)) {
+                setDocuments(data.documents);
+              }
+            })
+            .catch(() => {});
+        }}
+      />
 
     </div>
   );

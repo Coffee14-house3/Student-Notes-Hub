@@ -1,5 +1,5 @@
 import React from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, ExternalLink } from "lucide-react";
 import { FigureCard } from "./FigureCard";
 
 export const PaperMarkdownRenderer: React.FC<{ content: string; isDark?: boolean }> = ({ content, isDark = false }) => {
@@ -136,8 +136,29 @@ function renderBoldText(rawText: string, isDark: boolean = false) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 
-  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*)/g);
+  const parts = text.split(/(\[.*?\]\(https?:\/\/[^\)]+\)|\*\*.*?\*\*|\*.*?\*)/g);
   return parts.map((part, i) => {
+    const linkMatch = part.match(/^\[(.*?)\]\((https?:\/\/.*?)\)$/);
+    if (linkMatch) {
+      const linkText = linkMatch[1];
+      const linkUrl = linkMatch[2];
+      return (
+        <a
+          key={i}
+          href={linkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all shadow-xs my-1 ${
+            isDark 
+              ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40" 
+              : "bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300"
+          }`}
+        >
+          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+          <span>{linkText}</span>
+        </a>
+      );
+    }
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={i} className={`font-bold ${isDark ? "text-white" : "text-slate-950"}`}>{part.slice(2, -2)}</strong>;
     }

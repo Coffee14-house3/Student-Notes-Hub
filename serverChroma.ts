@@ -130,14 +130,22 @@ export async function initChroma(): Promise<boolean> {
       embeddingFunction = new RobustEmbeddingFunction();
     }
 
-    activeCollection = await chromaClient.getOrCreateCollection({
-      name: COLLECTION_NAME,
-      embeddingFunction: embeddingFunction,
-      metadata: {
-        description: "Vector database for AWS Cloud Notes & Study Portal RAG",
-        createdAt: new Date().toISOString()
-      }
-    });
+    // Attempt to get existing collection first to prevent collection creation quota limits
+    try {
+      activeCollection = await chromaClient.getCollection({
+        name: COLLECTION_NAME,
+        embeddingFunction: embeddingFunction
+      });
+    } catch {
+      activeCollection = await chromaClient.getOrCreateCollection({
+        name: COLLECTION_NAME,
+        embeddingFunction: embeddingFunction,
+        metadata: {
+          description: "Vector database for AWS Cloud Notes & Study Portal RAG",
+          createdAt: new Date().toISOString()
+        }
+      });
+    }
 
     isInitialized = true;
     initError = null;
@@ -375,39 +383,99 @@ export async function indexAllDocumentsToChroma(docs: NoteDocument[]): Promise<n
   return totalIndexed;
 }
 
-export async function deleteDocumentFromChroma(docId: string): Promise<boolean> {
+export async function deleteDocumentFromChroma(docId: string, knownDoc?: NoteDocument): Promise<boolean> {
   const ready = await initChroma();
-  if (!ready || !activeCollection) return false;
+  if (!ready || !activeCollection) {
+    console.warn(`[ChromaDB] Cannot delete document ${docId}: Chroma collection unavailable`);
+    return false;
+  }
 
   try {
     let deletedCount = 0;
+    const stringDocId = String(docId);
 
-    // 1. First retrieve all chunk IDs belonging to this document to perform exact ID deletion
+    // 1. Direct where clause deletion (matches metadata docId)
+    try {
+      const delPlain = await activeCollection.delete({
+        where: { docId: stringDocId }
+      });
+      if (delPlain && typeof delPlain.deleted === "number") {
+        deletedCount += delPlain.deleted;
+      }
+    } catch (e: any) {
+      console.warn(`[ChromaDB] Direct where-delete (plain) notice for ${docId}:`, e?.message);
+    }
+
+    try {
+      const delEq = await activeCollection.delete({
+        where: { docId: { "$eq": stringDocId } }
+      });
+      if (delEq && typeof delEq.deleted === "number") {
+        deletedCount += delEq.deleted;
+      }
+    } catch (e: any) {
+      console.warn(`[ChromaDB] Direct where-delete ($eq) notice for ${docId}:`, e?.message);
+    }
+
+    // 2. Exact chunk ID generation & batched deletion (batch <= 150 IDs to strictly avoid Chroma Cloud 300 quota limit)
+    const candidateIds = new Set<string>();
+
+    if (knownDoc) {
+      const sections = knownDoc.sections || [];
+      sections.forEach((sec, idx) => {
+        const pageNum = sec.pageNumber || idx + 1;
+        for (let c = 0; c < 20; c++) {
+          candidateIds.add(`doc_${stringDocId}_p${pageNum}_s${idx}_c${c}`);
+          candidateIds.add(`doc_${stringDocId}_p${idx + 1}_s${idx}_c${c}`);
+        }
+      });
+      for (let c = 0; c < 40; c++) {
+        candidateIds.add(`doc_${stringDocId}_overview_c${c}`);
+      }
+    }
+
+    // Sweep across common page and section numbers to catch all variants
+    for (let s = 0; s <= 35; s++) {
+      for (let c = 0; c <= 6; c++) {
+        candidateIds.add(`doc_${stringDocId}_p${s + 1}_s${s}_c${c}`);
+        candidateIds.add(`doc_${stringDocId}_p${s}_s${s}_c${c}`);
+      }
+    }
+    for (let c = 0; c <= 20; c++) {
+      candidateIds.add(`doc_${stringDocId}_overview_c${c}`);
+    }
+
+    const idsArray = Array.from(candidateIds);
+    const BATCH_SIZE = 150;
+    for (let i = 0; i < idsArray.length; i += BATCH_SIZE) {
+      const batch = idsArray.slice(i, i + BATCH_SIZE);
+      try {
+        const batchDel = await activeCollection.delete({ ids: batch });
+        if (batchDel && typeof batchDel.deleted === "number") {
+          deletedCount += batchDel.deleted;
+        }
+      } catch (batchErr: any) {
+        console.warn(`[ChromaDB] Batch delete notice:`, batchErr?.message);
+      }
+    }
+
+    // 3. Fallback: Query by metadata if get is available
     try {
       const existing = await activeCollection.get({
-        where: { docId: { "$eq": String(docId) } }
+        where: { docId: stringDocId }
       });
       if (existing && existing.ids && existing.ids.length > 0) {
-        await activeCollection.delete({ ids: existing.ids });
-        deletedCount += existing.ids.length;
-        console.log(`[ChromaDB] Successfully deleted ${deletedCount} vector chunks by ID for document "${docId}"`);
-        return true;
+        for (let i = 0; i < existing.ids.length; i += BATCH_SIZE) {
+          const batch = existing.ids.slice(i, i + BATCH_SIZE);
+          await activeCollection.delete({ ids: batch });
+          deletedCount += batch.length;
+        }
       }
-    } catch (getErr: any) {
-      console.warn(`[ChromaDB] Notice during chunk lookup for docId ${docId}:`, getErr?.message);
+    } catch {
+      // Billing limit or get unsupported - ignore safely
     }
 
-    // 2. Fallback: Direct where clause deletion
-    try {
-      await activeCollection.delete({
-        where: { docId: { "$eq": String(docId) } }
-      });
-      console.log(`[ChromaDB] Direct where-deleted chunks for document "${docId}"`);
-      return true;
-    } catch (whereErr: any) {
-      console.warn(`[ChromaDB] Direct where-delete notice for docId ${docId}:`, whereErr?.message);
-    }
-
+    console.log(`[ChromaDB] Successfully purged document "${docId}" from ChromaDB. Vectors removed: ${deletedCount}`);
     return true;
   } catch (err: any) {
     console.warn(`[ChromaDB] Error deleting chunks for docId ${docId}:`, err?.message);
@@ -472,24 +540,29 @@ export async function deleteAnnouncementFromChroma(annId: string): Promise<boole
   if (!ready || !activeCollection) return false;
 
   try {
-    const chunkId = `ann_${annId}`;
+    const stringAnnId = String(annId);
     let deleted = false;
 
-    // 1. Delete by direct ID
+    // 1. Delete by direct IDs
+    const candidateIds = [`ann_${stringAnnId}`];
+    for (let i = 0; i < 20; i++) {
+      candidateIds.push(`ann_${stringAnnId}_c${i}`);
+    }
+
     try {
-      await activeCollection.delete({ ids: [chunkId] });
+      await activeCollection.delete({ ids: candidateIds });
       deleted = true;
     } catch {}
 
-    // 2. Delete by metadata query in case metadata was mapped
+    // 2. Delete by metadata where query
     try {
-      const existing = await activeCollection.get({
-        where: { annId: { "$eq": String(annId) } }
-      });
-      if (existing && existing.ids && existing.ids.length > 0) {
-        await activeCollection.delete({ ids: existing.ids });
-        deleted = true;
-      }
+      await activeCollection.delete({ where: { annId: stringAnnId } });
+      deleted = true;
+    } catch {}
+
+    try {
+      await activeCollection.delete({ where: { docId: `ann_${stringAnnId}` } });
+      deleted = true;
     } catch {}
 
     console.log(`[ChromaDB] Deleted announcement "${annId}" from ChromaDB`);

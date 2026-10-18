@@ -15,6 +15,7 @@ import {
   Database,
   ArrowUpRight
 } from "lucide-react";
+import { apiFetch } from "../utils/apiClient";
 
 export interface StorageTier {
   id: number;
@@ -86,7 +87,7 @@ export const AutoScalingStorageHub: React.FC<Props> = ({ refreshTrigger }) => {
 
   const fetchMetrics = async () => {
     try {
-      const res = await fetch("/api/storage/metrics");
+      const res = await apiFetch("/api/storage/metrics");
       if (res.ok) {
         const data = await res.json();
         setMetrics(data);
@@ -107,7 +108,7 @@ export const AutoScalingStorageHub: React.FC<Props> = ({ refreshTrigger }) => {
   const handleTriggerSimulatedScale = async () => {
     setIsScaling(true);
     try {
-      const res = await fetch("/api/storage/auto-scale/trigger", {
+      const res = await apiFetch("/api/storage/auto-scale/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "Manual auto-scale elasticity test requested by instructor" })
@@ -129,7 +130,7 @@ export const AutoScalingStorageHub: React.FC<Props> = ({ refreshTrigger }) => {
   const handleOptimizeStorage = async () => {
     setIsOptimizing(true);
     try {
-      const res = await fetch("/api/storage/optimize", {
+      const res = await apiFetch("/api/storage/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" }
       });

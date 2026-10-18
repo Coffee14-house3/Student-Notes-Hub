@@ -1,4 +1,5 @@
 import { NoteDocument, CourseAnnouncement } from "../types";
+import { apiFetch } from "./apiClient";
 
 const DB_NAME = "CourseNotesHubDB";
 const DB_VERSION = 1;
@@ -7,6 +8,40 @@ const ANNOUNCEMENTS_STORE = "announcements";
 
 const LOCAL_DOCS_KEY = "aws_notes_uploaded_documents";
 const LOCAL_ANNOUNCEMENTS_KEY = "aws_course_announcements";
+const LOCAL_TOMBSTONES_KEY = "aws_notes_deleted_doc_ids";
+
+// Seeded mock notes to permanently prune so clean slate is maintained
+const DEFAULT_PRUNED_DOC_IDS = new Set<string>([
+  "upload-1790262692441",
+  "upload-1790226335828",
+  "upload-1790224763390",
+  "upload-1790224448104"
+]);
+
+/**
+ * Get synchronously cached deleted document tombstones
+ */
+export function getDeletedDocIdsSync(): Set<string> {
+  const result = new Set<string>(DEFAULT_PRUNED_DOC_IDS);
+  try {
+    const raw = localStorage.getItem(LOCAL_TOMBSTONES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        parsed.forEach(id => result.add(String(id)));
+      }
+    }
+  } catch {}
+  return result;
+}
+
+export function markDocIdDeletedSync(docId: string): void {
+  try {
+    const set = getDeletedDocIdsSync();
+    set.add(String(docId));
+    localStorage.setItem(LOCAL_TOMBSTONES_KEY, JSON.stringify(Array.from(set)));
+  } catch {}
+}
 
 /**
  * Open or upgrade the IndexedDB database
@@ -43,7 +78,8 @@ export function getStoredDocumentsSync(): NoteDocument[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        const deletedIds = getDeletedDocIdsSync();
+        return parsed.filter(d => d && d.id && !deletedIds.has(String(d.id)));
       }
     }
   } catch (err) {
@@ -143,7 +179,8 @@ export async function loadDocumentsFromStorage(): Promise<NoteDocument[]> {
     });
 
     if (Array.isArray(docs) && docs.length > 0) {
-      return docs;
+      const deletedIds = getDeletedDocIdsSync();
+      return docs.filter(d => d && d.id && !deletedIds.has(String(d.id)));
     }
   } catch (err) {
     console.warn("[Storage] IndexedDB read error, falling back to localStorage:", err);
@@ -233,36 +270,52 @@ export async function syncDocumentsWithServer(
     return [];
   }
 
-  // 2. For Teacher: If server already has documents, synchronize local cache to match server
-  const localDocs = await loadDocumentsFromStorage();
-  if (Array.isArray(serverDocs) && serverDocs.length > 0) {
-    await saveDocumentsToStorage(serverDocs);
-    return serverDocs;
-  }
+  // 2. For Teacher: Synchronize local cache to strictly match server
+  const deletedIds = getDeletedDocIdsSync();
 
-  // 3. If server returned empty, but teacher has persisted files from previous session,
-  // re-hydrate server so files are restored after container restart
-  if (localDocs.length > 0) {
-    console.log(`[Storage] Server storage was empty; re-hydrating teacher server with ${localDocs.length} local documents...`);
-    try {
-      const res = await fetch("/api/documents/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: localDocs })
-      });
-      if (res.ok) {
-        const syncedData = await res.json();
-        if (syncedData.documents && Array.isArray(syncedData.documents)) {
-          return syncedData.documents;
-        }
-      }
-    } catch (syncErr) {
-      console.warn("[Storage] Server rehydration sync notice:", syncErr);
-    }
-    return localDocs;
+  if (Array.isArray(serverDocs)) {
+    const validServerDocs = serverDocs.filter(d => d && d.id && !deletedIds.has(String(d.id)));
+    await saveDocumentsToStorage(validServerDocs);
+    return validServerDocs;
   }
 
   return [];
+}
+
+/**
+ * Permanently purge a document from all client storage layers (IndexedDB and localStorage)
+ * and register it into tombstones so it can never be re-hydrated.
+ */
+export async function permanentlyDeleteDocumentFromStorage(docId: string): Promise<void> {
+  const stringId = String(docId);
+  // 1. Mark in permanent tombstone set
+  markDocIdDeletedSync(stringId);
+
+  // 2. Remove from localStorage
+  try {
+    const raw = localStorage.getItem(LOCAL_DOCS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const remaining = parsed.filter((d: any) => d && d.id && String(d.id) !== stringId);
+        localStorage.setItem(LOCAL_DOCS_KEY, JSON.stringify(remaining));
+      }
+    }
+  } catch {}
+
+  // 3. Remove from IndexedDB
+  try {
+    const db = await openDB();
+    const tx = db.transaction(DOCS_STORE, "readwrite");
+    const store = tx.objectStore(DOCS_STORE);
+    store.delete(stringId);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn("[Storage] Error removing doc from IndexedDB:", err);
+  }
 }
 
 /**

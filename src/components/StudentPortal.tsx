@@ -8,6 +8,7 @@ import {
   ChevronDown, ChevronRight
 } from "lucide-react";
 import { NoteDocument, CourseAnnouncement } from "../types";
+import { StudySandbox } from "./StudySandbox";
 
 interface Props {
   documents: NoteDocument[];
@@ -34,6 +35,7 @@ export const StudentPortal: React.FC<Props> = ({
   const [viewLayout, setViewLayout] = useState<"curriculum" | "grid">("curriculum");
   const [collapsedSubjects, setCollapsedSubjects] = useState<Record<string, boolean>>({});
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+  const [studentTab, setStudentTab] = useState<"library" | "sandbox">("library");
 
   // Filter only published documents for students
   const publishedDocs = (documents || []).filter(d => d.isPublished !== false);
@@ -120,11 +122,20 @@ export const StudentPortal: React.FC<Props> = ({
 
   const getDocFormatBadge = (doc: NoteDocument) => {
     const name = doc.title.toLowerCase();
+    const isGoogle = doc.fileFormat === "google-drive" || doc.originalFileUrl?.includes("google.com") || doc.downloadUrl?.includes("google.com") || doc.tags?.includes("Google Link") || doc.tags?.includes("Google Drive");
     const isPpt = doc.fileFormat === "pptx" || doc.fileFormat === "ppt" || name.endsWith(".pptx") || name.endsWith(".ppt") || doc.tags?.includes("PPTX") || doc.tags?.includes("PowerPoint");
     const isDocx = doc.fileFormat === "docx" || doc.fileFormat === "doc" || name.endsWith(".docx") || name.endsWith(".doc") || doc.tags?.includes("DOCX") || doc.tags?.includes("Word");
     const isPdf = doc.fileFormat === "pdf" || name.endsWith(".pdf") || doc.pdfUrl || doc.tags?.includes("PDF") || doc.tags?.includes("Whitepaper");
     const isCode = doc.fileFormat === "code" || /\.(py|js|ts|json)$/i.test(name) || doc.tags?.includes("Lambda");
 
+    if (isGoogle) {
+      return (
+        <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1">
+          <ExternalLink className="w-3 h-3 text-indigo-400" />
+          <span>Google Note</span>
+        </span>
+      );
+    }
     if (isPpt) {
       return (
         <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
@@ -160,6 +171,161 @@ export const StudentPortal: React.FC<Props> = ({
     );
   };
 
+  const renderStudentNotesList = () => {
+    if (viewLayout === "curriculum") {
+      if (publishedDocs.length === 0) {
+        return (
+          <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center mx-auto">
+              <BookOpen className="w-7 h-7" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-bold text-white">No Course Notes Published Yet</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                No course notes have been published for this curriculum yet. Please check back soon or consult your instructor for updates.
+              </p>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div className="space-y-6">
+          {Object.entries(groupedBySubject).map(([subjectName, unitsMap]) => {
+            const subjectDocCount = Object.values(unitsMap).reduce((sum, list) => sum + list.length, 0);
+            const isCollapsed = !!collapsedSubjects[subjectName];
+
+            return (
+              <div key={subjectName} className="bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-lg">
+                <div 
+                  onClick={() => toggleSubjectCollapse(subjectName)}
+                  className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 transition-colors select-none"
+                >
+                  <div className="flex items-center gap-3">
+                    <button className="p-1 rounded-lg bg-slate-800 text-slate-300">
+                      {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5">
+                        {getSubjectIcon(subjectName)}
+                        {subjectName}
+                      </span>
+                      <span className="text-xs text-slate-400 font-mono">
+                        ({subjectDocCount} {subjectDocCount === 1 ? "Note" : "Notes"} in {Object.keys(unitsMap).length} {Object.keys(unitsMap).length === 1 ? "Unit" : "Units"})
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xs text-amber-400 font-semibold hidden sm:inline">
+                    Click to {isCollapsed ? "expand" : "collapse"}
+                  </span>
+                </div>
+
+                {!isCollapsed && (
+                  <div className="p-4 sm:p-6 space-y-6">
+                    {Object.entries(unitsMap).map(([unitName, unitDocs]) => (
+                      <div key={unitName} className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-extrabold flex items-center gap-1.5">
+                              <BookMarked className="w-3.5 h-3.5" />
+                              {unitName}
+                            </span>
+                            {unitDocs[0]?.unitTitle && (
+                              <span className="text-xs font-semibold text-slate-200">
+                                {unitDocs[0].unitTitle}
+                              </span>
+                            )}
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              ({unitDocs.length} {unitDocs.length === 1 ? "Note" : "Notes"})
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => onSelectDocument(`all-unit-${unitName}`)}
+                            className="px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                          >
+                            <Layers className="w-3.5 h-3.5 text-amber-400" />
+                            <span>All {unitName} Notes ({unitDocs.length})</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {unitDocs.map((doc) => (
+                            <div
+                              key={doc.id}
+                              className="bg-slate-950/70 border border-slate-800 hover:border-amber-500/60 rounded-2xl p-4 sm:p-5 transition-all flex flex-col justify-between gap-3.5 group hover:shadow-xl hover:shadow-amber-500/5 hover:-translate-y-0.5"
+                            >
+                              <div className="space-y-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {getDocFormatBadge(doc)}
+                                    <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                      {doc.unit || "Unit 1"}
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] text-slate-400 font-mono bg-slate-800/90 px-2 py-0.5 rounded-md border border-slate-700/60">
+                                    {doc.pageCount || doc.sections.length} {(doc.pageCount || doc.sections.length) === 1 ? "Slide" : "Slides"}
+                                  </span>
+                                </div>
+                                <h3 className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors line-clamp-2 leading-snug">
+                                  {doc.title}
+                                </h3>
+                                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                  {doc.description || "Comprehensive lecture notes and study material."}
+                                </p>
+                              </div>
+                              <div className="pt-3 border-t border-slate-800/80 flex items-center justify-end gap-2 text-xs">
+                                <button
+                                  onClick={() => onSelectDocument(doc.id, true)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-400 transition-all flex items-center gap-1 font-semibold text-xs border border-slate-700 cursor-pointer"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Ask AI
+                                </button>
+                                <button
+                                  onClick={() => onSelectDocument(doc.id, false)}
+                                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition-all flex items-center gap-1 text-xs shadow-sm cursor-pointer"
+                                >
+                                  <span>Read</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    } else {
+      if (filteredDocs.length === 0) {
+        return (
+          <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center space-y-4">
+            <h3 className="text-lg font-bold text-white">No Course Notes Available</h3>
+          </div>
+        );
+      }
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredDocs.map((doc) => (
+            <div key={doc.id} className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between gap-4">
+              <h3 className="text-base font-bold text-white">{doc.title}</h3>
+              <button
+                onClick={() => onSelectDocument(doc.id, false)}
+                className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
+              >
+                Read
+              </button>
+            </div>
+          ))}
+        </div>
+      );
+    }
+  };
+
   return (
     <div className="flex-1 bg-slate-950 text-slate-100 p-4 sm:p-8 overflow-y-auto min-h-screen">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -186,6 +352,30 @@ export const StudentPortal: React.FC<Props> = ({
               <p className="text-sm sm:text-base text-slate-300 leading-relaxed">
                 Browse verified course materials organized by <strong className="text-amber-400">Subject</strong> and <strong className="text-purple-300">Unit</strong>. Study unit-by-unit with interactive diagrams, take practice quizzes, and get instant answers with the AI Smart Tutor.
               </p>
+            </div>
+
+            {/* Tab Switcher */}
+            <div className="flex items-center gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800 shrink-0">
+              <button
+                onClick={() => setStudentTab("library")}
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  studentTab === "library"
+                    ? "bg-amber-500 text-slate-950 shadow-md"
+                    : "text-slate-300 hover:text-white"
+                }`}
+              >
+                📚 Course Notes Library
+              </button>
+              <button
+                onClick={() => setStudentTab("sandbox")}
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  studentTab === "sandbox"
+                    ? "bg-indigo-600 text-white shadow-md"
+                    : "text-slate-300 hover:text-white"
+                }`}
+              >
+                🧪 Cloud Study Sandbox
+              </button>
             </div>
           </div>
 
@@ -287,8 +477,12 @@ export const StudentPortal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* Search & Subject / Unit Category Filter Section */}
-        <div className="space-y-4">
+        {/* Search & Subject / Unit Category Filter Section or Study Sandbox */}
+        {studentTab === "sandbox" ? (
+          <StudySandbox />
+        ) : (
+          <div className="space-y-6">
+            <div className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -569,15 +763,7 @@ export const StudentPortal: React.FC<Props> = ({
                                   </div>
 
                                   {/* Card Bottom Actions */}
-                                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2 text-xs">
-                                    <button
-                                      onClick={() => onOpenQuiz(doc.id)}
-                                      className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 font-bold transition-all flex items-center gap-1 text-xs border border-amber-500/20 cursor-pointer"
-                                      title={`Take interactive quiz on ${doc.shortTitle || doc.title}`}
-                                    >
-                                      <HelpCircle className="w-3.5 h-3.5" /> Quiz
-                                    </button>
-
+                                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-end gap-2 text-xs">
                                     <div className="flex items-center gap-1.5">
                                       {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
                                         <a
@@ -623,7 +809,6 @@ export const StudentPortal: React.FC<Props> = ({
             )}
           </div>
         ) : (
-          /* VIEW 2: FLAT GRID VIEW */
           filteredDocs.length === 0 ? (
             <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center space-y-4">
               <div className="w-14 h-14 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center mx-auto">
@@ -641,10 +826,10 @@ export const StudentPortal: React.FC<Props> = ({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredDocs.map((doc) => (
-              <div
-                key={doc.id}
-                className="bg-slate-900/90 border border-slate-800 hover:border-amber-500/60 rounded-2xl p-5 transition-all flex flex-col justify-between gap-4 group hover:shadow-xl hover:shadow-amber-500/5 hover:-translate-y-0.5 relative"
-              >
+                <div
+                  key={doc.id}
+                  className="bg-slate-900/90 border border-slate-800 hover:border-amber-500/60 rounded-2xl p-5 transition-all flex flex-col justify-between gap-4 group hover:shadow-xl hover:shadow-amber-500/5 hover:-translate-y-0.5 relative"
+                >
                 <div className="space-y-3">
                   {/* Card Badges Top */}
                   <div className="flex items-center justify-between gap-2">
@@ -690,15 +875,7 @@ export const StudentPortal: React.FC<Props> = ({
                 </div>
 
                 {/* Card Bottom Actions */}
-                <div className="pt-3.5 border-t border-slate-800/80 flex items-center justify-between gap-2 text-xs">
-                  <button
-                    onClick={() => onOpenQuiz(doc.id)}
-                    className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 font-bold transition-all flex items-center gap-1 text-xs border border-amber-500/20 cursor-pointer"
-                    title={`Take interactive quiz on ${doc.shortTitle || doc.title}`}
-                  >
-                    <HelpCircle className="w-3.5 h-3.5" /> Quiz
-                  </button>
-
+                <div className="pt-3.5 border-t border-slate-800/80 flex items-center justify-end gap-2 text-xs">
                   <div className="flex items-center gap-2">
                     {(doc.fileFormat === "pptx" || doc.fileFormat === "ppt") && (
                       <a
@@ -732,9 +909,12 @@ export const StudentPortal: React.FC<Props> = ({
                   </div>
                 </div>
               </div>
-            ))}
+              ))}
+            </div>
+          )
+        )}
           </div>
-        ))}
+        )}
 
         {/* Student Portal Footer */}
         <div className="pt-12 pb-6 border-t border-slate-800/60 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
@@ -744,8 +924,6 @@ export const StudentPortal: React.FC<Props> = ({
           </div>
           <div className="flex items-center gap-4 text-slate-500 text-[11px]">
             <span>Interactive RAG Tutor Active</span>
-            <span>•</span>
-            <span>Self-Paced Practice Quiz</span>
           </div>
         </div>
 

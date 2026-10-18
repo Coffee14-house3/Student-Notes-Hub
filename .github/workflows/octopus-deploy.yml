@@ -1,0 +1,45 @@
+name: Trigger Octopus Cloud Deployment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build_and_octopus_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies & Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Octopus CLI
+        if: env.OCTOPUS_API_KEY != ''
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+        uses: OctopusDeploy/install-octopus-cli-action@v1.3.0
+        with:
+          version: latest
+
+      - name: Create Octopus Release & Deploy
+        if: env.OCTOPUS_API_KEY != ''
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+          OCTOPUS_SERVER_URL: ${{ secrets.OCTOPUS_SERVER_URL }}
+        run: |
+          octo create-release \
+            --server="${OCTOPUS_SERVER_URL}" \
+            --apiKey="${OCTOPUS_API_KEY}" \
+            --project="Course-Notes-Backend" \
+            --deployto="Production" \
+            --progress

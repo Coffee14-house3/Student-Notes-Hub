@@ -6,7 +6,9 @@ import { FlashcardsQuiz } from "./FlashcardsQuiz";
 import { SearchModal } from "./SearchModal";
 import { ExportModal } from "./ExportModal";
 import { AiAssistantModal } from "./AiAssistantModal";
-import { GraduationCap, BookOpen, Share2, Check, ArrowLeft } from "lucide-react";
+import { MicroArchitectureModal } from "../components/MicroArchitectureModal";
+import { GraduationCap, BookOpen, Share2, Check, ArrowLeft, Server, Layers } from "lucide-react";
+import { apiFetch, getBackendUrl, isStaticHosting } from "../utils/apiClient";
 import {
   getStoredDocumentsSync,
   getStoredAnnouncementsSync,
@@ -23,6 +25,7 @@ interface Props {
 }
 
 export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPortal }) => {
+  const [isMicroArchOpen, setIsMicroArchOpen] = useState<boolean>(false);
   const [activeView, setActiveView] = useState<string>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -71,9 +74,9 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     try {
       let serverDocs: NoteDocument[] | null = null;
 
-      // 1. Try local server endpoint
+      // 1. Fetch from Render micro-backend (supports local, configured URL, or VITE_API_URL)
       try {
-        const res = await fetch(`/api/documents?role=student&_t=${Date.now()}`, {
+        const res = await apiFetch(`/api/documents?role=student&_t=${Date.now()}`, {
           cache: "no-store",
           headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
         });
@@ -84,32 +87,10 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           }
         }
       } catch (e) {
-        console.warn("[StudentApp] Local fetch failed:", e);
+        console.warn("[StudentApp] Backend fetch failed:", e);
       }
 
-      // 2. If local server returned empty or failed and we are on a remote client, try remote Teacher directly
-      if (
-        (!serverDocs || serverDocs.length === 0) &&
-        typeof window !== "undefined" &&
-        !window.location.hostname.includes("course-teacher-portal")
-      ) {
-        try {
-          const remoteRes = await fetch(
-            `https://course-teacher-portal.onrender.com/api/documents?role=student&_t=${Date.now()}`,
-            { cache: "no-store" }
-          );
-          if (remoteRes.ok) {
-            const remoteData = await remoteRes.json();
-            if (Array.isArray(remoteData.documents) && remoteData.documents.length > 0) {
-              serverDocs = remoteData.documents;
-            }
-          }
-        } catch {
-          // ignore fallback error
-        }
-      }
-
-      // 3. When authoritative list is received from server:
+      // 2. When authoritative list is received from server:
       if (serverDocs !== null) {
         const publishedOnly = serverDocs.filter(d => d.isPublished !== false);
         // syncDocumentsWithServer strictly purges any documents that are no longer in publishedOnly
@@ -124,7 +105,7 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     } catch (err) {
       console.warn("[StudentApp] Sync failed:", err);
       if (isManual) {
-        setSyncStatus("Sync failed (offline or server restarting)");
+        setSyncStatus("Sync failed (offline or server waking up)");
         setTimeout(() => setSyncStatus(null), 4000);
       }
     } finally {
@@ -169,7 +150,7 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
         setAnnouncements(localAnns);
       }
       try {
-        const res = await fetch("/api/announcements");
+        const res = await apiFetch("/api/announcements");
         if (res.ok) {
           const data = await res.json();
           if (data.announcements && Array.isArray(data.announcements)) {
@@ -260,7 +241,7 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-amber-500/30 selection:text-amber-200">
       
       {/* Top Student Navigation Bar */}
-      <nav className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+      <nav className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-3 text-xs flex-wrap">
         
         {/* Left: Brand Identity */}
         <div className="flex items-center gap-2.5">
@@ -268,15 +249,42 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
             <GraduationCap className="w-4 h-4" />
           </div>
           <div>
-            <span className="font-extrabold text-sm text-white tracking-tight">Student Notes Hub</span>
-            <span className="hidden sm:inline text-[10px] text-slate-400 ml-2 border-l border-slate-800 pl-2">
-              Verified Course Materials
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-sm text-white tracking-tight">Student Notes Hub</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                16 Students • MCA-204
+              </span>
+            </div>
+            <p className="hidden md:block text-[10px] text-slate-400">
+              Verified Course Materials • Google Notes Sandbox • ChromaDB AI Tutor
+            </p>
           </div>
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+
+          {/* Switch to Teacher Studio (only in dual mode / not standalone) */}
+          {!isStandalone && (
+            <button
+              type="button"
+              onClick={() => {
+                if (onSwitchPortal) {
+                  onSwitchPortal("teacher");
+                } else {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("portal", "teacher");
+                  window.location.href = url.toString();
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+              title="Switch to Instructor Upload Studio"
+            >
+              <Layers className="w-3.5 h-3.5 text-purple-400" />
+              <span>Teacher Studio</span>
+            </button>
+          )}
+
           {activeView !== "dashboard" && (
             <button
               onClick={() => {
@@ -413,6 +421,15 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           document={currentDocument}
         />
       )}
+
+      {/* Production Micro-Architecture & Deployment Modal */}
+      <MicroArchitectureModal
+        isOpen={isMicroArchOpen}
+        onClose={() => setIsMicroArchOpen(false)}
+        onBackendUrlChanged={() => {
+          handleSyncWithTeacher(true);
+        }}
+      />
 
     </div>
   );

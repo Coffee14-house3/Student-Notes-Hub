@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { HelpCircle, CheckCircle2, XCircle, RotateCcw, Award, X, ChevronDown, Loader2 } from "lucide-react";
 import { QuizQuestion, NoteDocument } from "../types";
 import { quizQuestions } from "../data/notesData";
+import { apiFetch } from "../utils/apiClient";
 
 interface Props {
   selectedNote?: NoteDocument | null;
@@ -215,7 +216,7 @@ export const FlashcardsQuiz: React.FC<Props> = ({
         documentContent = (allNotes || []).map(n => `--- Document: ${n.title} ---\n` + (n.sections || []).map(s => `${s.title}:\n${s.contentMarkdown}`).join("\n")).join("\n\n");
       }
 
-      const res = await fetch("/api/generate-quiz", {
+      const res = await apiFetch("/api/generate-quiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, X, Send, Bot, User, RotateCcw, Copy, Check, Network, Maximize2, Minimize2 } from "lucide-react";
 
 import { NoteDocument } from "../types";
+import { apiFetch } from "../utils/apiClient";
 
 interface Props {
   isOpen: boolean;
@@ -684,7 +685,7 @@ export const AiAssistantModal: React.FC<Props> = ({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await apiFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

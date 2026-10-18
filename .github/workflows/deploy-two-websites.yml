@@ -1,0 +1,70 @@
+name: Deploy Two Websites (Student & Teacher)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build_and_deploy_both_sites:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # 1. Build Website 1: Dedicated Student Website (for 16 students)
+      - name: Build Student Website (Locked down, no teacher controls)
+        env:
+          VITE_PORTAL_MODE: student
+          VITE_STANDALONE: "true"
+          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+        run: npm run build:student
+
+      # 2. Build Website 2: Dedicated Teacher Website (for instructor)
+      - name: Build Teacher Website (Upload studio & note manager)
+        env:
+          VITE_PORTAL_MODE: teacher
+          VITE_STANDALONE: "true"
+          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+        run: npm run build:teacher
+
+      # 3. Assemble dual directory structure for static hosting
+      - name: Assemble Dual Static Folders
+        run: |
+          mkdir -p combined_dist
+          # Student site at /student/ and root
+          cp -r dist-student combined_dist/student
+          cp -r dist-student/* combined_dist/
+          # Teacher site at /teacher/
+          cp -r dist-teacher combined_dist/teacher
+
+      # 4. Deploy to GitHub Pages (or S3 / Cloudflare / Octopus)
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './combined_dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

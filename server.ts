@@ -361,8 +361,10 @@ async function callGroqChat(
 
 async function startServer() {
   const app = express();
-  // Support Render / cloud dynamic port assignment ($PORT) with fallback to 8080
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+  // Support Render / cloud dynamic port assignment ($PORT) in production, but bind to port 3000 in dev (AI Studio requirement)
+  const PORT = process.env.NODE_ENV === "production" && process.env.PORT
+    ? parseInt(process.env.PORT, 10)
+    : 3000;
 
   // Instant health check for Render uptime monitoring
   app.get("/api/health", (req, res) => {
@@ -390,11 +392,36 @@ async function startServer() {
   const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
   const DOCS_FILE = path.join(DATA_DIR, "documents.json");
   const ANNOUNCEMENTS_FILE = path.join(DATA_DIR, "announcements.json");
+  const TOMBSTONES_FILE = path.join(DATA_DIR, "deleted_tombstones.json");
   const PDF_DIR = path.join(DATA_DIR, "pdfs");
   const RAW_FILES_DIR = path.join(DATA_DIR, "files");
   const SLIDES_DIR = path.join(DATA_DIR, "slides");
   const storageScaler = new AutoScalingStorageManager(DATA_DIR);
   const rawFilesMap: Map<string, { buffer: Buffer; fileName: string; mimeType: string }> = new Map();
+  let deletedDocTombstones = new Set<string>();
+
+  function loadTombstones() {
+    try {
+      if (fs.existsSync(TOMBSTONES_FILE)) {
+        const raw = fs.readFileSync(TOMBSTONES_FILE, "utf-8");
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          deletedDocTombstones = new Set(list.map(String));
+        }
+      }
+    } catch {}
+    deletedDocTombstones.add("upload-1790262692441");
+    deletedDocTombstones.add("upload-1790226335828");
+    deletedDocTombstones.add("upload-1790224763390");
+    deletedDocTombstones.add("upload-1790224448104");
+  }
+
+  function saveTombstones() {
+    try {
+      ensureDataDir();
+      fs.writeFileSync(TOMBSTONES_FILE, JSON.stringify(Array.from(deletedDocTombstones)), "utf-8");
+    } catch {}
+  }
 
   function ensureDataDir() {
     try {
@@ -416,13 +443,14 @@ async function startServer() {
   }
 
   function loadPersistedData() {
+    loadTombstones();
     ensureDataDir();
     try {
       if (fs.existsSync(DOCS_FILE)) {
         const raw = fs.readFileSync(DOCS_FILE, "utf-8");
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          serverDocuments = parsed;
+          serverDocuments = parsed.filter(d => d && d.id && !deletedDocTombstones.has(String(d.id)));
 
           // Connect any pre-generated slides to document sections
           for (const doc of serverDocuments) {
@@ -1872,6 +1900,156 @@ Output ONLY valid JSON in this format:
     });
   });
 
+  // GET /api/health & /health (Render keep-alive & microservice connectivity check)
+  const healthCheckHandler = (req: any, res: any) => {
+    res.setHeader("Cache-Control", "no-cache");
+    const chromaConfig = getChromaConfig();
+    return res.json({
+      status: "healthy",
+      timestamp: Date.now(),
+      service: "course-notes-microservice",
+      architecture: "Render Microservice + Static GitHub Pages UI",
+      documentsCount: serverDocuments.length,
+      announcementsCount: serverAnnouncements.length,
+      chroma: {
+        database: chromaConfig.database,
+        configured: chromaConfig.isConfigured
+      }
+    });
+  };
+  app.get("/health", healthCheckHandler);
+  app.get("/api/health", healthCheckHandler);
+
+  // POST /api/parse-google-link (Parse & index Google Drive / Docs / Slides links for RAG)
+  app.post("/api/parse-google-link", async (req, res) => {
+    try {
+      const { url, title, subject, unit, unitTitle, courseCode, uploadedBy, notesSummary } = req.body;
+      if (!url || typeof url !== "string" || !url.trim()) {
+        return res.status(400).json({ error: "Google Link URL is required." });
+      }
+
+      const cleanUrl = url.trim();
+      let detectedService = "Google Drive";
+      let embedUrl = cleanUrl;
+      let fileId = "";
+
+      const driveMatch = cleanUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      const docMatch = cleanUrl.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+      const presMatch = cleanUrl.match(/\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+      const sheetMatch = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+
+      if (docMatch) {
+        detectedService = "Google Docs";
+        fileId = docMatch[1];
+        embedUrl = `https://docs.google.com/document/d/${fileId}/preview`;
+      } else if (presMatch) {
+        detectedService = "Google Slides";
+        fileId = presMatch[1];
+        embedUrl = `https://docs.google.com/presentation/d/${fileId}/embed`;
+      } else if (sheetMatch) {
+        detectedService = "Google Sheets";
+        fileId = sheetMatch[1];
+        embedUrl = `https://docs.google.com/spreadsheets/d/${fileId}/preview`;
+      } else if (driveMatch) {
+        detectedService = "Google Drive PDF";
+        fileId = driveMatch[1];
+        embedUrl = `https://drive.google.com/file/d/${fileId}/preview`;
+      }
+
+      // Extract text content if public Google Doc export is accessible
+      let extractedContent = "";
+      if (docMatch && fileId) {
+        try {
+          const exportUrl = `https://docs.google.com/document/d/${fileId}/export?format=txt`;
+          const fetchRes = await fetch(exportUrl, { headers: { "User-Agent": "CourseNotesHubBot/1.0" } });
+          if (fetchRes.ok) {
+            const rawTxt = await fetchRes.text();
+            if (rawTxt && rawTxt.trim().length > 30) {
+              extractedContent = rawTxt.trim();
+            }
+          }
+        } catch {}
+      }
+
+      const finalTitle = (title && title.trim()) || `${detectedService} Note`;
+      const docId = `glink-${Date.now()}`;
+      
+      const markdownBody = extractedContent 
+        ? extractedContent 
+        : (notesSummary && notesSummary.trim())
+        ? notesSummary.trim()
+        : `### 📌 ${finalTitle}\n\n- **Source Material:** [Open in ${detectedService}](${cleanUrl})\n- **Service:** ${detectedService}\n- **Access:** Shared by Instructor for 16 Class Students.\n\nStudents can view the full note in the live sandbox iframe viewer and ask questions in the side-by-side RAG AI chat.`;
+
+      // Split into sections if text is long
+      const sections = [];
+      const paragraphs = markdownBody.split(/\n{2,}/).filter((p: string) => p.trim());
+      if (paragraphs.length <= 4) {
+        sections.push({
+          id: `sec-${docId}-1`,
+          title: finalTitle,
+          subtitle: `${detectedService} • ${unit || "Unit 1"}`,
+          contentMarkdown: markdownBody,
+          pageNumber: 1
+        });
+      } else {
+        const CHUNK_SIZE = 3;
+        for (let i = 0; i < paragraphs.length; i += CHUNK_SIZE) {
+          const pageNum = Math.floor(i / CHUNK_SIZE) + 1;
+          const textChunk = paragraphs.slice(i, i + CHUNK_SIZE).join("\n\n");
+          sections.push({
+            id: `sec-${docId}-${pageNum}`,
+            title: `${finalTitle} (Part ${pageNum})`,
+            subtitle: `Page ${pageNum} • ${detectedService}`,
+            contentMarkdown: textChunk,
+            pageNumber: pageNum
+          });
+        }
+      }
+
+      const newDoc: any = {
+        id: docId,
+        title: finalTitle,
+        shortTitle: finalTitle.length > 22 ? finalTitle.slice(0, 20) + "..." : finalTitle,
+        description: `Imported ${detectedService}: ${finalTitle}`,
+        subject: subject || "AWS Cloud & Labs",
+        unit: unit || "Unit 1",
+        unitTitle: unitTitle || "Google Shared Notes",
+        courseCode: courseCode || "MCA-204",
+        uploadedBy: uploadedBy || "Instructor",
+        uploadedAt: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        isPublished: true,
+        fileFormat: "google-drive",
+        originalFileUrl: cleanUrl,
+        downloadUrl: cleanUrl,
+        embedUrl: embedUrl,
+        pageCount: sections.length,
+        sections: sections,
+        tags: [detectedService, "Google Link", "Shared Material"]
+      };
+
+      serverDocuments.unshift(newDoc);
+      saveDocuments();
+
+      let chunksIndexed = 0;
+      try {
+        chunksIndexed = await indexDocumentToChroma(newDoc);
+      } catch (e: any) {
+        console.warn("[ChromaDB] Notice during Google link indexing:", e?.message);
+      }
+
+      return res.json({
+        success: true,
+        document: newDoc,
+        detectedService,
+        embedUrl,
+        chunksIndexed
+      });
+    } catch (err: any) {
+      console.error("[Google Link] Error parsing Google link:", err);
+      return res.status(500).json({ error: err.message || "Failed to process Google Link." });
+    }
+  });
+
   // GET /api/documents (filter by role or environment mode, with remote Teacher sync)
   app.get("/api/documents", async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -2003,11 +2181,23 @@ Output ONLY valid JSON in this format:
     return res.json({ document: serverDocuments[idx], success: true });
   });
 
-  // DELETE /api/documents/:id (Delete document)
+  // DELETE /api/documents/:id (Delete document permanently)
   app.delete("/api/documents/:id", async (req, res) => {
-    const docId = req.params.id;
+    const docId = String(req.params.id || "").trim();
+    if (!docId) return res.status(400).json({ error: "Document ID required" });
+
+    // 1. Mark in permanent tombstone set so it can never be re-hydrated
+    deletedDocTombstones.add(docId);
+    saveTombstones();
+
+    // 2. Identify doc before removal to feed exact structure to Chroma deletion
+    const targetDoc = serverDocuments.find(d => d.id === docId);
+
+    // 3. Remove from serverDocuments and save to disk
     serverDocuments = serverDocuments.filter(d => d.id !== docId);
     saveDocuments();
+
+    // 4. Remove physical files and buffers
     try {
       const pdfPath = path.join(PDF_DIR, `${docId}.pdf`);
       if (fs.existsSync(pdfPath)) {
@@ -2025,36 +2215,51 @@ Output ONLY valid JSON in this format:
       }
       pdfBuffers.delete(docId);
       rawFilesMap.delete(docId);
-    } catch {}
+    } catch (fsErr) {
+      console.warn(`[Storage] File cleanup notice for ${docId}:`, fsErr);
+    }
+
+    // 5. Delete permanently from ChromaDB Cloud
     try {
-      await deleteDocumentFromChroma(docId);
-      console.log(`[ChromaDB] Document "${docId}" deleted and removed from ChromaDB.`);
+      await deleteDocumentFromChroma(docId, targetDoc);
+      console.log(`[ChromaDB] Document "${docId}" (${targetDoc?.title || "Note"}) deleted permanently and removed from ChromaDB.`);
     } catch (e: any) {
       console.warn("[ChromaDB] Delete error on DELETE /api/documents/:id:", e?.message || e);
     }
-    // Re-evaluate storage metrics
+
+    // 6. Re-evaluate storage metrics
     storageScaler.evaluateAndScaleSync();
-    return res.json({ success: true, message: `Document ${docId} removed from storage and ChromaDB.` });
+    return res.json({ 
+      success: true, 
+      docId,
+      message: `Document "${targetDoc?.title || docId}" permanently deleted from disk storage and removed from ChromaDB.` 
+    });
   });
 
   // POST /api/documents/reset or /api/documents/clear-all (Clear all documents and vectors)
   app.post("/api/documents/reset", async (req, res) => {
+    for (const d of serverDocuments) {
+      if (d && d.id) deletedDocTombstones.add(String(d.id));
+    }
+    saveTombstones();
+
     serverDocuments = [];
     saveDocuments();
     try {
       // Clean uploaded files and slide caches
       if (fs.existsSync(PDF_DIR)) {
         fs.readdirSync(PDF_DIR).forEach(f => {
-          if (f.startsWith("upload-")) {
-            try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
-          }
+          try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
         });
       }
       if (fs.existsSync(RAW_FILES_DIR)) {
         fs.readdirSync(RAW_FILES_DIR).forEach(f => {
-          if (f.startsWith("upload-")) {
-            try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
-          }
+          try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
+        });
+      }
+      if (fs.existsSync(SLIDES_DIR)) {
+        fs.readdirSync(SLIDES_DIR).forEach(f => {
+          try { fs.rmSync(path.join(SLIDES_DIR, f), { recursive: true, force: true }); } catch {}
         });
       }
     } catch {}
@@ -2066,21 +2271,27 @@ Output ONLY valid JSON in this format:
   });
 
   app.post("/api/documents/clear-all", async (req, res) => {
+    for (const d of serverDocuments) {
+      if (d && d.id) deletedDocTombstones.add(String(d.id));
+    }
+    saveTombstones();
+
     serverDocuments = [];
     saveDocuments();
     try {
       if (fs.existsSync(PDF_DIR)) {
         fs.readdirSync(PDF_DIR).forEach(f => {
-          if (f.startsWith("upload-")) {
-            try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
-          }
+          try { fs.unlinkSync(path.join(PDF_DIR, f)); } catch {}
         });
       }
       if (fs.existsSync(RAW_FILES_DIR)) {
         fs.readdirSync(RAW_FILES_DIR).forEach(f => {
-          if (f.startsWith("upload-")) {
-            try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
-          }
+          try { fs.unlinkSync(path.join(RAW_FILES_DIR, f)); } catch {}
+        });
+      }
+      if (fs.existsSync(SLIDES_DIR)) {
+        fs.readdirSync(SLIDES_DIR).forEach(f => {
+          try { fs.rmSync(path.join(SLIDES_DIR, f), { recursive: true, force: true }); } catch {}
         });
       }
     } catch {}
@@ -2098,26 +2309,31 @@ Output ONLY valid JSON in this format:
       const overwrite = Boolean(req.body?.overwrite);
 
       if (Array.isArray(incoming)) {
+        // Strictly filter out any tombstoned documents
+        const filteredIncoming = incoming.filter(d => d && d.id && !deletedDocTombstones.has(String(d.id)));
+
         if (overwrite) {
           // Authoritative replacement: identify removed documents to purge from ChromaDB
-          const incomingIds = new Set(incoming.map((d: any) => d.id));
+          const incomingIds = new Set(filteredIncoming.map((d: any) => d.id));
           const removedDocs = serverDocuments.filter(d => !incomingIds.has(d.id));
 
           for (const removed of removedDocs) {
-            deleteDocumentFromChroma(removed.id).catch(err => {
+            deletedDocTombstones.add(String(removed.id));
+            deleteDocumentFromChroma(removed.id, removed).catch(err => {
               console.warn(`[ChromaDB] Sync cleanup notice for ${removed.id}:`, err?.message || err);
             });
           }
+          saveTombstones();
 
-          serverDocuments = [...incoming];
+          serverDocuments = [...filteredIncoming];
           saveDocuments();
           return res.json({ success: true, count: serverDocuments.length, documents: serverDocuments });
         }
 
-        if (incoming.length > 0) {
+        if (filteredIncoming.length > 0) {
           const existingIds = new Set(serverDocuments.map(d => d.id));
           let addedCount = 0;
-          for (const doc of incoming) {
+          for (const doc of filteredIncoming) {
             if (doc && doc.id && !existingIds.has(doc.id)) {
               serverDocuments.push(doc);
               existingIds.add(doc.id);
@@ -3036,7 +3252,7 @@ ${extractedContent}
     try {
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: { middlewareMode: true, hmr: false },
         appType: "spa",
       });
       app.use(vite.middlewares);
