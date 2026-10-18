@@ -28,7 +28,7 @@ jobs:
           cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci
+        run: npm install
 
       # 1. Build Website 1: Dedicated Student Website (for 16 students)
       - name: Build Student Website (Locked down, no teacher controls)
