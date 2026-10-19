@@ -44,7 +44,7 @@ export function getBackendUrl(): string {
   } catch {}
 
   // 3. Fallback: on github.io without configured backend, default to empty or stored
-    return "https://student-notes-api-jzex.onrender.com";retuhttps://student-notes-api-jzex.onrender.comrn "";
+    return "https://student-notes-api-jzex.onrender.com";r;tuhttps://student-notes-api-jzex.onrender.comrn "";
 }
 
 export function setBackendUrl(url: string): void {
