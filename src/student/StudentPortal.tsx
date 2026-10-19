@@ -351,10 +351,28 @@ export const StudentPortal: React.FC<Props> = ({
             <GraduationCap className="w-4 h-4 text-amber-500" />
             <span>Student Notes Hub — Verified Course Materials</span>
           </div>
-          <div className="flex items-center gap-4 text-slate-500 text-[11px]">
+          <div className="flex items-center gap-4 text-slate-500 text-[11px] flex-wrap">
             <span>Interactive RAG Tutor Active</span>
             <span>•</span>
             <span>Self-Paced Practice Quiz</span>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (onSwitchPortal) {
+                  onSwitchPortal("teacher");
+                } else {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("portal", "teacher");
+                  window.location.href = url.toString();
+                }
+              }}
+              className="text-purple-400 hover:text-purple-300 transition-colors cursor-pointer font-medium flex items-center gap-1"
+              title="Open Instructor Upload Studio"
+            >
+              <Layers className="w-3 h-3" />
+              <span>Teacher Studio</span>
+            </button>
           </div>
         </div>
 

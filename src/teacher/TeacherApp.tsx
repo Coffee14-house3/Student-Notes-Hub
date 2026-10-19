@@ -486,12 +486,17 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           <button
             type="button"
             onClick={() => {
+              try {
+                const url = new URL(window.location.href);
+                url.searchParams.set("portal", "student");
+                window.history.pushState({}, "", url.toString());
+              } catch {
+                // ignore
+              }
               if (onSwitchPortal) {
                 onSwitchPortal("student");
               } else {
-                const url = new URL(window.location.href);
-                url.searchParams.set("portal", "student");
-                window.location.href = url.toString();
+                window.location.href = "./?portal=student";
               }
             }}
             className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"

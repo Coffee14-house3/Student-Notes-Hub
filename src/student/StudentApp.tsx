@@ -67,10 +67,15 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [isServerWakingUp, setIsServerWakingUp] = useState<boolean>(false);
 
   // Core synchronization: Queries the backend/teacher portal and purges any notes deleted by the teacher
   const handleSyncWithTeacher = async (isManual = false) => {
     if (isManual) setIsSyncing(true);
+    const wakeTimer = setTimeout(() => {
+      setIsServerWakingUp(true);
+    }, 1800);
+
     try {
       let serverDocs: NoteDocument[] | null = null;
 
@@ -88,6 +93,9 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
         }
       } catch (e) {
         console.warn("[StudentApp] Backend fetch failed:", e);
+      } finally {
+        clearTimeout(wakeTimer);
+        setIsServerWakingUp(false);
       }
 
       // 2. When authoritative list is received from server:
@@ -109,6 +117,8 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
         setTimeout(() => setSyncStatus(null), 4000);
       }
     } finally {
+      clearTimeout(wakeTimer);
+      setIsServerWakingUp(false);
       if (isManual) setIsSyncing(false);
       isInitializedRef.current = true;
     }
@@ -264,17 +274,22 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
         {/* Right: Actions */}
         <div className="flex items-center gap-2 flex-wrap">
 
-          {/* Switch to Teacher Studio (only in dual mode / not standalone) */}
+          {/* Switch to Teacher Studio */}
           {!isStandalone && (
             <button
               type="button"
               onClick={() => {
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("portal", "teacher");
+                  window.history.pushState({}, "", url.toString());
+                } catch {
+                  // ignore
+                }
                 if (onSwitchPortal) {
                   onSwitchPortal("teacher");
                 } else {
-                  const url = new URL(window.location.href);
-                  url.searchParams.set("portal", "teacher");
-                  window.location.href = url.toString();
+                  window.location.href = "./?portal=teacher";
                 }
               }}
               className="px-3 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
@@ -301,6 +316,18 @@ export const StudentApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
           )}
         </div>
       </nav>
+
+      {/* Render Free Tier 15-Minute Spin-Down Alert */}
+      {isServerWakingUp && (
+        <div className="bg-amber-950/80 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-200 flex items-center justify-between gap-3 animate-pulse z-30">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
+            <span>
+              <strong>Connecting to server...</strong> Render backend is waking up from idle (~30-50s). You can still read cached notes immediately!
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Main View Area */}
       <main className="flex-1">

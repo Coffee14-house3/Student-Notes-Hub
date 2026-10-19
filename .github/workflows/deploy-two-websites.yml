@@ -31,10 +31,9 @@ jobs:
         run: npm install
 
       # 1. Build Website 1: Dedicated Student Website (for 16 students)
-      - name: Build Student Website (Locked down, no teacher controls)
+      - name: Build Student Website (Default student view)
         env:
           VITE_PORTAL_MODE: student
-          VITE_STANDALONE: "true"
           VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
         run: npm run build:student
 
@@ -42,7 +41,6 @@ jobs:
       - name: Build Teacher Website (Upload studio & note manager)
         env:
           VITE_PORTAL_MODE: teacher
-          VITE_STANDALONE: "true"
           VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
         run: npm run build:teacher
 
@@ -50,11 +48,13 @@ jobs:
       - name: Assemble Dual Static Folders
         run: |
           mkdir -p combined_dist
-          # Student site at /student/ and root
+          # Student site at root and /student/
           cp -r dist-student combined_dist/student
           cp -r dist-student/* combined_dist/
           # Teacher site at /teacher/
           cp -r dist-teacher combined_dist/teacher
+          # Copy 404.html SPA router
+          cp public/404.html combined_dist/404.html 2>/dev/null || true
 
       # 4. Deploy to GitHub Pages (or S3 / Cloudflare / Octopus)
       - name: Setup GitHub Pages

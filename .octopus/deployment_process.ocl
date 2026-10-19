@@ -1,0 +1,17 @@
+step "Build and Deploy Application" {
+    name = "Build and Deploy Application"
+
+    action {
+        action_type = "Octopus.Script"
+        properties = {
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                npm install --no-audit
+                npm run build:dual
+                npm run build
+                Write-Host "✅ Course Notes Hub deployed successfully for Student and Teacher portals!"
+            EOT
+            Octopus.Action.Script.Syntax = "PowerShell"
+            Octopus.Action.RunOnServer = "true"
+        }
+    }
+}

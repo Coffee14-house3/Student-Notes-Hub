@@ -114,7 +114,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Octopus CLI
-        uses: OctopusDeploy/install-octopus-cli-action@v1.3.0
+        uses: OctopusDeploy/install-octopus-cli-action@v1
         with:
           version: latest
 

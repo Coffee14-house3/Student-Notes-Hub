@@ -1,0 +1,72 @@
+# 🏛️ Complete Microservices Architecture Composition
+# Orchestrates 4 decoupled microservices with zero manual configuration
+
+services:
+  # Microservice 1: Core API & Document Ingestion Microservice
+  api-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: noteshub-api-service
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - CHROMA_API_KEY=${CHROMA_API_KEY:-ck-GcQZtcjL4HkCUrRnhdhvLC632JVA9YXHYw7PVoDWj8AM}
+      - CHROMA_TENANT=${CHROMA_TENANT:-0f94ea0f-37ba-4909-88f1-4ee0f0e15dd7}
+      - CHROMA_DATABASE=${CHROMA_DATABASE:-rag-notes-application1}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Microservice 2: Dedicated Student Portal Micro-Frontend
+  # Exclusively for 16 MCA-204 Students (All teacher tools stripped)
+  student-portal:
+    image: nginx:alpine
+    container_name: noteshub-student-portal
+    ports:
+      - "3001:80"
+    volumes:
+      - ./dist-student:/usr/share/nginx/html:ro
+    depends_on:
+      api-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Microservice 3: Dedicated Teacher Studio Micro-Frontend
+  # Course authoring, file & Google Drive link uploads, note management
+  teacher-studio:
+    image: nginx:alpine
+    container_name: noteshub-teacher-studio
+    ports:
+      - "3002:80"
+    volumes:
+      - ./dist-teacher:/usr/share/nginx/html:ro
+    depends_on:
+      api-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Microservice 4: Local Vector Database (Optional fallback when running offline)
+  chromadb-service:
+    image: chromadb/chroma:latest
+    container_name: noteshub-chromadb
+    ports:
+      - "8000:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+    driver: local

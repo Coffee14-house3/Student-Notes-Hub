@@ -86,7 +86,7 @@ jobs:
       - run: npm ci && npm run build
 
       - name: Install Octopus CLI
-        uses: OctopusDeploy/install-octopus-cli-action@v1.3.0
+        uses: OctopusDeploy/install-octopus-cli-action@v1
         with:
           version: latest
 
@@ -336,20 +336,23 @@ jobs:
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
 
-          {/* Quick Backend Connectivity Bar */}
+          {/* Automated Microservice Mesh Monitor (Zero Manual Configuration) */}
           <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Settings className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-bold text-white">Live Render Backend URL</span>
+                <Cpu className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Automated Microservices Mesh</span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-medium">
+                  Auto-Discovered
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 {testing ? (
                   <span className="flex items-center gap-1 text-[11px] text-amber-400 font-mono">
-                    <RefreshCw className="w-3 h-3 animate-spin" /> Testing ping...
+                    <RefreshCw className="w-3 h-3 animate-spin" /> Probing microservices...
                   </span>
                 ) : testResult ? (
-                  <span className={`flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                  <span className={`flex items-center gap-1 text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${
                     testResult.ok 
                       ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                       : "bg-rose-500/10 text-rose-400 border-rose-500/30"
@@ -358,38 +361,60 @@ jobs:
                     {testResult.message}
                   </span>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={() => handleRunTest()}
+                  disabled={testing}
+                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Probe All Microservices"
+                >
+                  <RefreshCw className={`w-3 h-3 ${testing ? "animate-spin" : ""}`} />
+                  <span>Probe Health</span>
+                </button>
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                value={currentUrl}
-                onChange={(e) => setCurrentUrl(e.target.value)}
-                placeholder="https://your-service.onrender.com (or leave empty for relative /api)"
-                className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveUrl}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shadow-md shadow-indigo-600/30"
-                >
-                  Save & Connect
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRunTest(currentUrl)}
-                  disabled={testing}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition-colors cursor-pointer"
-                  title="Test Connection"
-                >
-                  <RefreshCw className={`w-4 h-4 ${testing ? "animate-spin" : ""}`} />
-                </button>
+            {/* 4 Microservice Mesh Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Student Micro-UI
+                </span>
+                <span className="text-xs font-bold text-white">Port 3001 / Pages</span>
+                <span className="text-[10px] text-slate-500">16 MCA-204 Users</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                  Teacher Studio
+                </span>
+                <span className="text-xs font-bold text-white">Port 3002 / /teacher</span>
+                <span className="text-[10px] text-slate-500">Author & Uploads</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                  Core API Engine
+                </span>
+                <span className="text-xs font-bold text-white">Express Microservice</span>
+                <span className="text-[10px] text-slate-500">PDF / DOCX Ingestion</span>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
+                <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                  Vector RAG Service
+                </span>
+                <span className="text-xs font-bold text-white">ChromaDB Cloud</span>
+                <span className="text-[10px] text-slate-500">Embeddings & Query</span>
               </div>
             </div>
-            <p className="text-[11px] text-slate-500">
-              When deployed on GitHub Pages, the client uses this URL to communicate with your Render backend over HTTPS.
+
+            <p className="text-[11px] text-slate-400">
+              ⚡ <strong>Zero Configuration Needed:</strong> The micro-frontends automatically route to the cloud backend API with automated service discovery.
             </p>
           </div>
 

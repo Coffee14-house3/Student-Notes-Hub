@@ -5,61 +5,62 @@ import { AppPortalMode } from "./types";
 import { apiFetch } from "./utils/apiClient";
 
 export default function App() {
-  // Detect portal mode from environment variables, URL path, hostname, or search params
+  // Detect portal mode: URL search param MUST have highest priority!
   const [portalMode, setPortalMode] = useState<AppPortalMode>(() => {
     try {
-      const vitePortal = String((import.meta as any).env?.VITE_PORTAL_MODE || "").toLowerCase().trim();
-      if (vitePortal === "student") return "student";
-      if (vitePortal === "teacher") return "teacher";
-
-      // Hostname check (e.g., student.domain.com, teacher.domain.com, mca204-students.github.io)
-      const host = window.location.hostname.toLowerCase();
-      if (host.includes("student")) return "student";
-      if (host.includes("teacher")) return "teacher";
-
-      // Path or file check (e.g. /student, /student.html, /teacher, /teacher.html)
-      const path = window.location.pathname.toLowerCase();
-      if (path.includes("student")) return "student";
-      if (path.includes("teacher")) return "teacher";
-
+      // 1. Explicit query parameter has HIGHEST priority (?portal=teacher or ?portal=student)
       const params = new URLSearchParams(window.location.search);
-      const portalParam = params.get("portal");
-      if (portalParam === "student") return "student";
+      const portalParam = params.get("portal")?.toLowerCase().trim();
       if (portalParam === "teacher") return "teacher";
+      if (portalParam === "student") return "student";
+
+      // 2. Path or file check (e.g. /teacher, /teacher/, /teacher.html, /student)
+      const path = window.location.pathname.toLowerCase();
+      if (path.includes("teacher")) return "teacher";
+      if (path.includes("student")) return "student";
+
+      // 3. Hostname check (e.g., student.domain.com, teacher.domain.com)
+      const host = window.location.hostname.toLowerCase();
+      if (host.includes("teacher")) return "teacher";
+      if (host.includes("student")) return "student";
+
+      // 4. Vite build-time environment variable
+      const vitePortal = String((import.meta as any).env?.VITE_PORTAL_MODE || "").toLowerCase().trim();
+      if (vitePortal === "teacher") return "teacher";
+      if (vitePortal === "student") return "student";
     } catch {
       // ignore
     }
-    return "teacher"; // Default to teacher view for studio access
+    return "student"; // Default to student view for class
   });
 
-  // Track if running as a standalone locked website (e.g. 100% Student Website or 100% Teacher Website)
+  // Track if running in locked mode (only when explicitly requested via ?lock=true or lock=student)
   const [isStandalone, setIsStandalone] = useState<boolean>(() => {
     try {
-      const viteStandalone = String((import.meta as any).env?.VITE_STANDALONE || "").toLowerCase().trim();
-      if (viteStandalone === "true" || viteStandalone === "1") return true;
-
-      const vitePortal = String((import.meta as any).env?.VITE_PORTAL_MODE || "").toLowerCase().trim();
-      if (vitePortal === "student" || vitePortal === "teacher") return true;
-
-      const host = window.location.hostname.toLowerCase();
-      if (host.includes("student") || host.includes("teacher")) return true;
-
       const params = new URLSearchParams(window.location.search);
-      if (params.get("standalone") === "true" || params.get("lock") === "true") return true;
+      if (params.get("lock") === "student" || params.get("lock") === "true") return true;
+
+      const viteStandalone = String((import.meta as any).env?.VITE_STANDALONE || "").toLowerCase().trim();
+      if (viteStandalone === "locked" || viteStandalone === "strict") return true;
     } catch {
       // ignore
     }
     return false;
   });
 
-  // Sync server configuration on mount
+  // Sync server configuration on mount without overriding user explicit URL param
   useEffect(() => {
     const fetchConfig = async () => {
       try {
+        const params = new URLSearchParams(window.location.search);
+        const hasExplicitPortal = params.has("portal") || 
+          window.location.pathname.toLowerCase().includes("teacher") || 
+          window.location.pathname.toLowerCase().includes("student");
+
         const res = await apiFetch("/api/config");
         if (res.ok) {
           const data = await res.json();
-          if (data.isStandalone) {
+          if (data.isStandalone && !hasExplicitPortal) {
             setIsStandalone(true);
             if (data.portalMode === "student") {
               setPortalMode("student");

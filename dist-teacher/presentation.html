@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud Network Security - PowerPoint Slideshow</title>
+  <style>
+    :root {
+      --bg-dark: #0c121e;
+      --card-bg: #151d2f;
+      --card-border: #222f47;
+      --accent-amber: #f59e0b;
+      --accent-orange: #ea580c;
+      --text-white: #ffffff;
+      --text-light: #e2e8f0;
+      --text-muted: #94a3b8;
+      --green-allow: #10b981;
+      --red-deny: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: #060911;
+      color: var(--text-white);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Top Ribbon Header */
+    header {
+      height: 52px;
+      background: #111726;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 20;
+    }
+
+    .badge {
+      background: var(--accent-orange);
+      color: white;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    .doc-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-light);
+      margin-left: 8px;
+    }
+
+    .nav-btn {
+      background: #1e293b;
+      color: var(--text-light);
+      border: 1px solid #334155;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .nav-btn:hover {
+      background: #334155;
+      color: white;
+    }
+
+    .nav-btn.primary {
+      background: var(--accent-amber);
+      color: #0f172a;
+      border-color: #d97706;
+      font-weight: 700;
+    }
+
+    .nav-btn.primary:hover {
+      background: #fbbf24;
+    }
+
+    /* Presentation Viewport */
+    #viewport {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    /* 16:9 Slide Canvas */
+    .slide-canvas {
+      width: 100%;
+      max-width: 1200px;
+      aspect-ratio: 16 / 9;
+      background: radial-gradient(circle at 80% 20%, #152033 0%, #0c121e 100%);
+      border: 1px solid #23314d;
+      border-radius: 12px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+      padding: 40px 56px;
+      display: none;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+      animation: fadeIn 0.25s ease-out;
+    }
+
+    .slide-canvas.active {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.985); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    /* Slide Header */
+    .slide-header {
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+
+    .slide-category {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--accent-amber);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .slide-title {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--text-white);
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+    }
+
+    /* Slide Body Content */
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 16px;
+      font-size: 15px;
+      line-height: 1.6;
+      color: var(--text-light);
+    }
+
+    .lead-text {
+      font-size: 16px;
+      color: #cbd5e1;
+      margin-bottom: 12px;
+      max-width: 900px;
+      line-height: 1.6;
+    }
+
+    /* Layout Grids */
+    .card-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .card-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .card-grid-5 {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+
+    .feature-card {
+      background: rgba(21, 29, 47, 0.85);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 18px;
+      position: relative;
+    }
+
+    .feature-card.highlight {
+      border-color: rgba(245, 158, 11, 0.4);
+      background: rgba(245, 158, 11, 0.05);
+    }
+
+    .card-heading {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 8px;
+    }
+
+    .card-body {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Diagram Blocks */
+    .diagram-container {
+      background: #090e18;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      gap: 20px;
+    }
+
+    .node {
+      background: #172338;
+      border: 1px solid #334466;
+      border-radius: 8px;
+      padding: 16px 20px;
+      text-align: center;
+      min-width: 140px;
+    }
+
+    .node-title {
+      font-size: 14px;
+      font-weight: 800;
+      color: white;
+    }
+
+    .node-ip {
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--accent-amber);
+      margin-top: 4px;
+    }
+
+    .arrow-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .arrow-allow {
+      color: var(--green-allow);
+    }
+
+    .arrow-deny {
+      color: var(--red-deny);
+    }
+
+    /* Slide Footer */
+    .slide-footer {
+      border-top: 1px solid #1e293b;
+      padding-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-family: monospace;
+      color: var(--text-muted);
+    }
+
+    /* Bottom HUD Controls */
+    #hud {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 8px 18px;
+      border-radius: 40px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      z-index: 50;
+    }
+
+    .hud-btn {
+      background: transparent;
+      border: none;
+      color: white;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      transition: background 0.15s;
+    }
+
+    .hud-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    #slide-indicator {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-amber);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    @media (max-width: 800px) {
+      .card-grid-3, .card-grid-5 { grid-template-columns: 1fr; }
+      .card-grid-2 { grid-template-columns: 1fr; }
+      .slide-title { font-size: 24px; }
+      .slide-canvas { padding: 24px; aspect-ratio: auto; min-height: 480px; }
+      .diagram-container { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Ribbon -->
+  <header>
+    <div style="display:flex; align-items:center;">
+      <span class="badge">PPTX</span>
+      <span class="doc-title">Security_Groups_and_Bastion_Host</span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="nav-btn" onclick="prevSlide()">◀ Prev</button>
+      <button class="nav-btn primary" onclick="nextSlide()">Next ▶</button>
+      <button class="nav-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+    </div>
+  </header>
+
+  <!-- Presentation Stage -->
+  <div id="viewport">
+
+    <!-- SLIDE 1 -->
+    <section class="slide-canvas active" data-slide="1">
+      <div class="slide-header">
+        <div class="slide-category">OVERVIEW</div>
+        <h1 class="slide-title">CLOUD NETWORK SECURITY</h1>
+      </div>
+      <div class="slide-content">
+        <h2 style="font-size:24px; color:var(--accent-amber); font-weight:700;">Controlling Network Traffic</h2>
+        <p class="lead-text">Security groups, firewall rules, and the bastion host pattern</p>
+        <div class="card-grid-3" style="margin-top:20px;">
+          <div class="feature-card highlight">
+            <div style="font-size:24px; font-weight:800; color:var(--accent-amber); margin-bottom:8px;">01</div>
+            <div class="card-heading">Firewalls & Traffic</div>
+            <div class="card-body">Fundamental concepts of controlling network ingress and egress.</div>
+          </div>
+          <div class="feature-card highlight">
+            <div style="font-size:24px; font-weight:800; color:var(--accent-amber); margin-bottom:8px;">02</div>
+            <div class="card-heading">Security Groups</div>
+            <div class="card-body">Stateful virtual firewalls filtering on protocol, port, and security groups.</div>
+          </div>
+          <div class="feature-card highlight">
+            <div style="font-size:24px; font-weight:800; color:var(--accent-amber); margin-bottom:8px;">03</div>
+            <div class="card-heading">Bastion Host Pattern</div>
+            <div class="card-body">Single jump-box entry point preventing lateral network penetration.</div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Overview</span>
+        <span>Slide 1 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 2 -->
+    <section class="slide-canvas" data-slide="2">
+      <div class="slide-header">
+        <div class="slide-category">FIREWALLS & TRAFFIC</div>
+        <h1 class="slide-title">Why Control Traffic In and Out?</h1>
+      </div>
+      <div class="slide-content">
+        <p class="lead-text">You only want traffic to enter or leave your server that actually needs to. A firewall lets you control inbound (ingress) and outbound (egress) traffic — the same least-privilege principle you'd apply to IAM permissions.</p>
+        <div class="card-grid-3" style="margin-top:16px;">
+          <div class="feature-card">
+            <div class="card-heading">Open only what's needed</div>
+            <div class="card-body">A web server usually needs just port 80 (HTTP) and 443 (HTTPS) open. Everything else stays closed.</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading">Fewer holes, less risk</div>
+            <div class="card-body">A strict firewall shuts down a lot of possible security holes before they become a problem.</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading">Prevent accidents too</div>
+            <div class="card-body">Not opening outbound SMTP on a test system stops it from accidentally emailing real customers.</div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Firewalls & Traffic</span>
+        <span>Slide 2 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 3 -->
+    <section class="slide-canvas" data-slide="3">
+      <div class="slide-header">
+        <div class="slide-category">FIREWALLS & TRAFFIC</div>
+        <h1 class="slide-title">Inbound vs. Outbound Traffic</h1>
+      </div>
+      <div class="slide-content">
+        <div class="card-grid-2" style="margin-top:10px;">
+          <div class="feature-card" style="border-left: 4px solid var(--accent-amber);">
+            <div style="font-size:18px; font-weight:800; color:var(--accent-amber); margin-bottom:10px;">Inbound (Ingress)</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">Traffic coming into your server from somewhere else — like a visitor's browser requesting your website.</div>
+          </div>
+          <div class="feature-card" style="border-left: 4px solid #38bdf8;">
+            <div style="font-size:18px; font-weight:800; color:#38bdf8; margin-bottom:10px;">Outbound (Egress)</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">Traffic leaving your server — like your server calling out to an API, sending mail, or pulling updates.</div>
+          </div>
+        </div>
+        <div style="margin-top:20px; padding:16px; background:#141c2b; border-radius:8px; border:1px solid #24324a; color:#94a3b8; font-size:14px;">
+          📌 Before traffic can enter or leave your instance, it passes through a firewall that inspects it and applies your rules.
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Firewalls & Traffic</span>
+        <span>Slide 3 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 4 -->
+    <section class="slide-canvas" data-slide="4">
+      <div class="slide-header">
+        <div class="slide-category">FIREWALLS & TRAFFIC</div>
+        <h1 class="slide-title">How a Request Travels Through the Firewall</h1>
+      </div>
+      <div class="slide-content">
+        <div class="diagram-container">
+          <div class="node">
+            <div class="node-title">Source</div>
+            <div class="node-ip">10.0.0.10</div>
+          </div>
+          <div class="arrow-box">
+            <span class="arrow-allow">▶ Inbound Request</span>
+            <span style="color:#64748b; font-size:10px;">SSH (TCP : 22)</span>
+            <span class="arrow-allow">◀ Outbound Response</span>
+          </div>
+          <div class="node" style="border-color:var(--accent-amber); background:#1e1a12;">
+            <div class="node-title" style="color:var(--accent-amber);">Firewall Rules</div>
+            <div style="font-size:11px; color:#cbd5e1; margin-top:4px;">Allow / Deny Filter</div>
+          </div>
+          <div class="arrow-box">
+            <span class="arrow-allow">▶ Evaluated Traffic</span>
+          </div>
+          <div class="node">
+            <div class="node-title">Destination</div>
+            <div class="node-ip">10.10.0.20</div>
+          </div>
+        </div>
+        <div class="feature-card highlight" style="margin-top:14px;">
+          <div class="card-heading" style="color:var(--accent-amber);">THE THREE STEPS</div>
+          <div class="card-body" style="color:#cbd5e1; font-size:13px;">
+            1. Source sends request &nbsp;·&nbsp; 2. Firewall checks its rules &nbsp;·&nbsp; 3. If allowed, destination receives it and can respond.
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Firewalls & Traffic</span>
+        <span>Slide 4 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 5 -->
+    <section class="slide-canvas" data-slide="5">
+      <div class="slide-header">
+        <div class="slide-category">SECURITY GROUPS</div>
+        <h1 class="slide-title">The Default Behavior</h1>
+      </div>
+      <div class="slide-content">
+        <div class="card-grid-2">
+          <div class="feature-card" style="border-top:3px solid var(--red-deny);">
+            <div class="card-heading" style="color:var(--red-deny);">Inbound: Denied by default</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">
+              Nothing can reach your server until you explicitly add a rule allowing it in.
+            </div>
+          </div>
+          <div class="feature-card" style="border-top:3px solid var(--green-allow);">
+            <div class="card-heading" style="color:var(--green-allow);">Outbound: Allowed by default</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">
+              Your server can reach out anywhere — until the moment you add your first outbound rule.
+            </div>
+          </div>
+        </div>
+        <div class="feature-card" style="margin-top:12px; background:#1c1318; border-color:#5c2429;">
+          <div class="card-heading" style="color:#f87171;">⚠️ The switch to watch for</div>
+          <div class="card-body" style="color:#e2e8f0; font-size:13px;">
+            The moment you add any outbound rule, the default flips from “allow all” to “deny all” — only the exceptions you've explicitly added stay allowed.
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Security Groups</span>
+        <span>Slide 5 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 6 -->
+    <section class="slide-canvas" data-slide="6">
+      <div class="slide-header">
+        <div class="slide-category">SECURITY GROUPS</div>
+        <h1 class="slide-title">What a Security Group Rule Can Match</h1>
+      </div>
+      <div class="slide-content">
+        <p class="lead-text">A security group is a set of rules attached to your AWS resources (like EC2 instances). Each rule can filter on:</p>
+        <div class="card-grid-5">
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">Direction</div>
+            <div class="card-body">Inbound or outbound</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">IP Protocol</div>
+            <div class="card-body">TCP, UDP, or ICMP</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">IP Range</div>
+            <div class="card-body">Specific address or CIDR range</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">Port</div>
+            <div class="card-body">e.g. 22 for SSH, 443 for HTTPS</div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">Sec Group</div>
+            <div class="card-body">Another security group (AWS-only)</div>
+          </div>
+        </div>
+        <div style="font-size:13px; color:#94a3b8; margin-top:12px; font-style:italic;">
+          Good practice: define rules as restrictive as possible. AWS won't stop you from allowing everything — but you should.
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Security Groups</span>
+        <span>Slide 6 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 7 -->
+    <section class="slide-canvas" data-slide="7">
+      <div class="slide-header">
+        <div class="slide-category">SECURITY GROUPS</div>
+        <h1 class="slide-title">Source vs. Destination: Which Way Rules Filter</h1>
+      </div>
+      <div class="slide-content">
+        <div class="card-grid-2">
+          <div class="feature-card">
+            <div class="card-heading" style="color:#38bdf8;">Inbound rules filter by SOURCE</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">
+              Where is this traffic coming from? You allow inbound traffic only from specific source IP ranges — or specific security groups.
+            </div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">Outbound rules filter by DESTINATION</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light);">
+              Where is this traffic going? You allow outbound traffic only to specific destination IP ranges — or specific security groups.
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:20px; padding:14px; background:#121824; border:1px solid #1e293b; border-radius:8px; font-size:13px; color:#cbd5e1;">
+          💡 AWS is responsible for the firewall itself — you're responsible for the rules you write.
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Security Groups</span>
+        <span>Slide 7 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 8 -->
+    <section class="slide-canvas" data-slide="8">
+      <div class="slide-header">
+        <div class="slide-category">SECURITY GROUPS</div>
+        <h1 class="slide-title">Why Reference a Security Group Instead of an IP?</h1>
+      </div>
+      <div class="slide-content">
+        <p class="lead-text">Cloud servers come and go — rules based on fixed source IP addresses get out of date fast. Referencing a security group instead stays correct automatically.</p>
+        <div class="diagram-container">
+          <div class="node">
+            <div class="node-title">Web Cache Servers</div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">(Security Group)</div>
+          </div>
+          <div style="color:var(--accent-amber); font-weight:bold;">▶ only accessible from ▶</div>
+          <div class="node">
+            <div class="node-title">Web Servers</div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">(Security Group)</div>
+          </div>
+          <div style="color:var(--accent-amber); font-weight:bold;">▶ only accessible from ▶</div>
+          <div class="node">
+            <div class="node-title">MySQL Database</div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">(Security Group)</div>
+          </div>
+        </div>
+        <div style="font-size:13px; color:#94a3b8; margin-top:12px;">
+          As you add or remove web servers, both rules stay correct automatically — no manual IP list to maintain.
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Security Groups</span>
+        <span>Slide 8 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 9 -->
+    <section class="slide-canvas" data-slide="9">
+      <div class="slide-header">
+        <div class="slide-category">BASTION HOST PATTERN</div>
+        <h1 class="slide-title">The Problem: Too Many Doors</h1>
+      </div>
+      <div class="slide-content">
+        <div class="feature-card" style="border-left:4px solid var(--red-deny);">
+          <div class="card-heading" style="color:#f87171;">The Risk of Direct Access</div>
+          <div class="card-body" style="font-size:14px; color:var(--text-light);">
+            If every server allows SSH directly from the internet, you have many possible entry points to defend — and if any one server is compromised, an attacker may be able to jump to the others.
+          </div>
+        </div>
+        <div class="feature-card highlight" style="border-left:4px solid var(--accent-amber); margin-top:16px;">
+          <div class="card-heading" style="color:var(--accent-amber);">The Fix: A Bastion Host (Jump Box)</div>
+          <div class="card-body" style="font-size:14px; color:var(--text-light);">
+            Only one server — the bastion host — can be reached via SSH from the internet, ideally restricted to a specific source IP. Every other server can only be reached via SSH from the bastion host itself.
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Bastion Host Pattern</span>
+        <span>Slide 9 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 10 -->
+    <section class="slide-canvas" data-slide="10">
+      <div class="slide-header">
+        <div class="slide-category">BASTION HOST PATTERN</div>
+        <h1 class="slide-title">Implementing It: Two Rules</h1>
+      </div>
+      <div class="slide-content">
+        <div class="card-grid-2" style="margin-top:16px;">
+          <div class="feature-card" style="border-top:3px solid var(--accent-amber);">
+            <div style="font-size:24px; font-weight:900; color:var(--accent-amber); margin-bottom:8px;">1</div>
+            <div class="card-heading">Allow SSH to the bastion host</div>
+            <div class="card-body" style="font-size:14px; color:#e2e8f0;">
+              From 0.0.0.0/0, or better, a specific known source IP address.
+            </div>
+          </div>
+          <div class="feature-card" style="border-top:3px solid var(--green-allow);">
+            <div style="font-size:24px; font-weight:900; color:var(--green-allow); margin-bottom:8px;">2</div>
+            <div class="card-heading">Allow SSH to every other server — but only from the bastion</div>
+            <div class="card-body" style="font-size:14px; color:#e2e8f0;">
+              The source for this rule is the bastion host's security group, not the open internet.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Bastion Host Pattern</span>
+        <span>Slide 10 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 11 -->
+    <section class="slide-canvas" data-slide="11">
+      <div class="slide-header">
+        <div class="slide-category">BASTION HOST PATTERN</div>
+        <h1 class="slide-title">The Bastion Host Access Pattern</h1>
+      </div>
+      <div class="slide-content">
+        <div class="diagram-container">
+          <div class="node">
+            <div class="node-title">Your IP Address</div>
+            <div style="font-size:11px; color:#94a3b8;">Admin Workstation</div>
+          </div>
+          <div class="arrow-box">
+            <span class="arrow-allow">▶ SSH Allowed</span>
+          </div>
+          <div class="node" style="border-color:var(--accent-amber); background:#1e1a12;">
+            <div class="node-title" style="color:var(--accent-amber);">Bastion Host</div>
+            <div style="font-size:11px; color:#cbd5e1;">Public Subnet</div>
+          </div>
+          <div class="arrow-box">
+            <span class="arrow-allow">▶ SSH Allowed ▶</span>
+            <span class="arrow-deny" style="margin-top:8px;">✕ Direct Internet Denied</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <div class="node">
+              <div class="node-title">Server A</div>
+              <div style="font-size:11px; color:#94a3b8;">Private Subnet</div>
+            </div>
+            <div class="node">
+              <div class="node-title">Server B</div>
+              <div style="font-size:11px; color:#94a3b8;">Private Subnet</div>
+            </div>
+          </div>
+        </div>
+        <div style="text-align:center; font-size:12px; color:#94a3b8; margin-top:12px; font-family:monospace;">
+          Solid green = allowed &nbsp;·&nbsp; Dashed red = denied
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Bastion Host Pattern</span>
+        <span>Slide 11 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 12 -->
+    <section class="slide-canvas" data-slide="12">
+      <div class="slide-header">
+        <div class="slide-category">BASTION HOST PATTERN</div>
+        <h1 class="slide-title">Why This Pattern Works</h1>
+      </div>
+      <div class="slide-content">
+        <div class="card-grid-2">
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">One entry point, one job</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light); line-height:1.6;">
+              You have a single entry point into your system, and that entry point does nothing but SSH. The chances of it being compromised are small.
+            </div>
+          </div>
+          <div class="feature-card">
+            <div class="card-heading" style="color:var(--accent-amber);">No lateral movement</div>
+            <div class="card-body" style="font-size:14px; color:var(--text-light); line-height:1.6;">
+              If a web server, mail server, or FTP server is hacked, the attacker can't jump from that server to all the others.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Bastion Host Pattern</span>
+        <span>Slide 12 of 13</span>
+      </div>
+    </section>
+
+    <!-- SLIDE 13 -->
+    <section class="slide-canvas" data-slide="13">
+      <div class="slide-header">
+        <div class="slide-category">SUMMARY</div>
+        <h1 class="slide-title">Key Takeaways</h1>
+      </div>
+      <div class="slide-content">
+        <div style="display:flex; flex-direction:column; gap:12px; max-width:900px;">
+          <div class="feature-card" style="display:flex; align-items:center; gap:14px;">
+            <div style="font-size:20px;">🛡️</div>
+            <div class="card-body" style="font-size:14px; color:#f8fafc;">
+              Open only the ports you need — typically 80/443 for a web server — and close everything else.
+            </div>
+          </div>
+          <div class="feature-card" style="display:flex; align-items:center; gap:14px;">
+            <div style="font-size:20px;">🔒</div>
+            <div class="card-body" style="font-size:14px; color:#f8fafc;">
+              Inbound traffic is denied by default; outbound is allowed by default until you add a rule.
+            </div>
+          </div>
+          <div class="feature-card" style="display:flex; align-items:center; gap:14px;">
+            <div style="font-size:20px;">⚡</div>
+            <div class="card-body" style="font-size:14px; color:#f8fafc;">
+              Reference security groups instead of fixed IPs so rules stay correct as servers change.
+            </div>
+          </div>
+          <div class="feature-card" style="display:flex; align-items:center; gap:14px;">
+            <div style="font-size:20px;">🏰</div>
+            <div class="card-body" style="font-size:14px; color:#f8fafc;">
+              A bastion host gives you one controlled entry point and stops attackers from moving laterally.
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="slide-footer">
+        <span>Summary</span>
+        <span>Slide 13 of 13</span>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Bottom Floating Presenter HUD -->
+  <div id="hud">
+    <button class="hud-btn" onclick="prevSlide()" title="Previous Slide (Left Arrow)">◀</button>
+    <div id="slide-indicator">1 / 13</div>
+    <button class="hud-btn" onclick="nextSlide()" title="Next Slide (Right Arrow or Space)">▶</button>
+    <button class="hud-btn" onclick="toggleFullscreen()" title="Fullscreen Slideshow (F)">⛶</button>
+  </div>
+
+  <script>
+    let currentSlide = 1;
+    const totalSlides = 13;
+    const slides = document.querySelectorAll('.slide-canvas');
+    const indicator = document.getElementById('slide-indicator');
+
+    function showSlide(index) {
+      if (index < 1) index = 1;
+      if (index > totalSlides) index = totalSlides;
+      currentSlide = index;
+
+      slides.forEach((s, idx) => {
+        s.classList.toggle('active', idx + 1 === currentSlide);
+      });
+
+      indicator.textContent = `${currentSlide} / ${totalSlides}`;
+    }
+
+    function prevSlide() {
+      showSlide(currentSlide - 1);
+    }
+
+    function nextSlide() {
+      showSlide(currentSlide + 1);
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    }
+
+    // Keyboard Arrow & Presentation Controls
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        e.preventDefault();
+        nextSlide();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        prevSlide();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        showSlide(1);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        showSlide(totalSlides);
+      } else if (e.key === 'f' || e.key === 'F' || e.key === 'F5') {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+    });
+
+    // Touch swipe support for mobile
+    let touchStartX = 0;
+    window.addEventListener('touchstart', (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, false);
+
+    window.addEventListener('touchend', (e) => {
+      const touchEndX = e.changedTouches[0].screenX;
+      if (touchStartX - touchEndX > 50) nextSlide();
+      if (touchEndX - touchStartX > 50) prevSlide();
+    }, false);
+  </script>
+</body>
+</html>

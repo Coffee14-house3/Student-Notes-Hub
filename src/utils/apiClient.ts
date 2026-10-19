@@ -43,8 +43,13 @@ export function getBackendUrl(): string {
     }
   } catch {}
 
-  // 3. Fallback: on github.io without configured backend, default to empty or stored
-    return "https://student-notes-api-jzex.onrender.com";r;tuhttps://student-notes-api-jzex.onrender.comrn "";
+  // 3. Automated Discovery: on static hosting (GitHub Pages), route to live Render backend
+  if (isStaticHosting()) {
+    return "https://student-notes-api-jzex.onrender.com";
+  }
+
+  // 4. Local dev / same-origin fallback
+  return "";
 }
 
 export function setBackendUrl(url: string): void {

@@ -20,14 +20,14 @@ jobs:
 
       - name: Install Dependencies & Build
         run: |
-          npm ci
+          npm install
           npm run build
 
       - name: Install Octopus CLI
         if: env.OCTOPUS_API_KEY != ''
         env:
           OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
-        uses: OctopusDeploy/install-octopus-cli-action@v1.3.0
+        uses: OctopusDeploy/install-octopus-cli-action@v1
         with:
           version: latest
 
