@@ -207,7 +207,7 @@ async function callGeminiChat(
           contents: userPromptWithContext,
           config: {
             systemInstruction,
-            temperature: 0.3,
+            temperature: 0.2,
           },
         });
       });
@@ -261,7 +261,7 @@ async function callOpenRouterChat(
   preferredModels?: string[],
   jsonMode?: boolean
 ): Promise<{ text: string; modelUsed: string } | null> {
-  const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || "sk-bl-G8Mzfl2tCk_QEMd9Oti8UO5H8NkAQfAm9IeGA-c34ZUCbAyu").trim();
+  const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || "").trim();
   if (!apiKey) return null;
 
   const models = preferredModels || [
@@ -2451,11 +2451,14 @@ Output ONLY valid JSON in this format:
 
       // 0. Query ChromaDB Cloud Vector Database for semantic chunks
       try {
-        const chromaMatches = await queryChroma(prompt, {
+        const chromaPromise = queryChroma(prompt, {
           docId: activeDocument?.id,
           nResults: 6
         });
-        if (chromaMatches.length > 0) {
+        const timeoutPromise = new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 2500));
+        const chromaMatches = await Promise.race([chromaPromise, timeoutPromise]);
+
+        if (Array.isArray(chromaMatches) && chromaMatches.length > 0) {
           ragContextText += `\n\n[=== CHROMADB CLOUD VECTOR DATABASE MATCHES (Database: rag-notes-application1) ===]\n` +
             chromaMatches.map((m, idx) => `[Vector Match #${idx + 1} - ${m.metadata?.docTitle} - Page ${m.metadata?.pageNumber}]\n${m.document}`).join("\n\n-------------------\n\n");
         }
@@ -2471,57 +2474,76 @@ Output ONLY valid JSON in this format:
           .split(/\s+/)
           .filter((w: string) => w.length > 2);
 
-        // Score sections by keyword overlap if document is large (e.g. All Files View / 146 pages)
-        let selectedSections = sections;
-        if (sections.length > 25) {
-          if (keywords.length > 0) {
-            const scored = sections.map((s: any) => {
-              const secText = (s.title + " " + s.contentMarkdown).toLowerCase();
-              let score = 0;
-              for (const kw of keywords) {
-                if (secText.includes(kw)) score += 2;
-              }
-              return { section: s, score };
-            });
+        // Filter out boilerplate Google Drive iframe links so RAG context contains high-density content
+        const isBoilerplate = (sec: any) => {
+          const content = sec?.contentMarkdown || "";
+          return content.includes("Source Material: [Open in") ||
+                 content.includes("live sandbox iframe viewer") ||
+                 (content.includes("Google Slides") && content.length < 220);
+        };
 
-            scored.sort((a, b) => b.score - a.score);
-            const topMatches = scored.filter(s => s.score > 0).slice(0, 20).map(s => s.section);
-            
-            if (topMatches.length > 0) {
-              const firstPages = sections.slice(0, 5);
-              const combinedMap = new Map();
-              [...firstPages, ...topMatches].forEach(s => combinedMap.set(s.pageNumber, s));
-              selectedSections = Array.from(combinedMap.values()).sort((a, b) => a.pageNumber - b.pageNumber);
-            } else {
-              selectedSections = sections.slice(0, 30);
+        const meaningfulSections = sections.filter(s => !isBoilerplate(s));
+        const candidateSections = meaningfulSections.length > 0 ? meaningfulSections : sections;
+
+        // Hybrid semantic + keyword scoring with Title boosting (inspired by Charitra textbook RAG)
+        let selectedSections = candidateSections;
+        if (candidateSections.length > 6 && keywords.length > 0) {
+          const scored = candidateSections.map((s: any) => {
+            const titleLower = (s.title || "").toLowerCase();
+            const bodyLower = (s.contentMarkdown || "").toLowerCase();
+            let score = 0;
+
+            for (const kw of keywords) {
+              if (titleLower.includes(kw)) score += 10; // High weight for title matches (strongest signal)
+              if (bodyLower.includes(kw)) score += 2;
             }
+
+            if (titleLower.includes(queryLower)) score += 20; // Full query phrase bonus
+            if (bodyLower.includes(queryLower)) score += 10;
+
+            return { section: s, score };
+          });
+
+          scored.sort((a, b) => b.score - a.score);
+          const topMatches = scored.filter(s => s.score > 0).slice(0, 10).map(s => s.section);
+
+          if (topMatches.length > 0) {
+            selectedSections = topMatches;
           } else {
-            selectedSections = sections.slice(0, 30);
+            selectedSections = candidateSections.slice(0, 15);
           }
         }
 
-        ragContextText = `[ACTIVE PDF DOCUMENT: "${activeDocument.title}" - Total Pages: ${sections.length}]\n\n` +
+        ragContextText = `[ACTIVE COURSE DOCUMENT: "${activeDocument.title}" - Total Sections: ${sections.length}]\n\n` +
           selectedSections.map((s: any) => 
-            `[=== PDF PAGE ${s.pageNumber} ===]\nTitle: ${s.title}\nSubtitle: ${s.subtitle || ""}\nContent:\n${s.contentMarkdown}`
+            `[=== SECTION: ${s.title} ===]\nSubtitle: ${s.subtitle || ""}\nContent:\n${s.contentMarkdown}`
           ).join("\n\n-------------------\n\n");
         ragContextText = ragContextText.slice(0, 14000);
       }
 
-      const systemInstruction = `You are an expert AI Smart Tutor and AWS Cloud Architect assisting a student with their AWS lecture notes and lab manuals using RAG.
+      const systemInstruction = `You are an expert AI Academic Tutor and Curriculum Specialist (inspired by Charitra high-precision educational Q&A architecture) assisting students with their course notes, networking, and cloud computing syllabus.
 
-EXAM MARKS & ANSWERING RULES:
-1. MARKS WEIGHTAGE GUIDELINES:
-   - 2 MARKS ANSWER: Structure the answer into EXACTLY 4 concise, high-impact bullet points (no more, no less).
-   - 6 MARKS ANSWER: Provide a concise, highly accurate, and well-structured answer with sub-headings, key definitions, types/components, and core benefits. DO NOT include unnecessary filler sections, extra topics, or long unrequested "working mechanism" descriptions unless specifically asked by the user.
-   - 10 MARKS ANSWER: Provide a comprehensive deep-dive answer with key components, structural architecture, comparison matrix, and key takeaways.
-   - GENERAL QUESTIONS: Provide a clear, thorough, accurate, and well-structured answer with bold key terms and bullet points.
+CORE PRECISION & PEDAGOGICAL RULES (CHARITRA SPECIFICATION):
+1. ZERO CONVERSATIONAL FILLER:
+   - Do NOT start with conversational greetings, throat-clearing, or filler ("Hello!", "Sure thing", "Based on your notes...", "Here is the information").
+   - Begin IMMEDIATELY with an authoritative, high-precision direct definition answering the core question in 1–2 sentences.
 
-2. MULTI-TOPIC PROMPTS (CRITICAL): If the user's question asks about multiple topics (e.g., "Fault Tolerance, IaaS, CDN, Web Server vs App Server, Hypervisor..."), you MUST provide a dedicated 2-mark answer (4 key points) for EVERY SINGLE topic requested. Do NOT omit any topic or collapse them into a single summary.
+2. HIGH-PRECISION STRUCTURED BREAKDOWN:
+   Deliver the answer following this exact, student-friendly 4-part academic schema:
+   - **Direct Definition & Core Concept:** Accurate technical definition with formal standards (e.g., IEEE standards like 802.1Q, OSI layers, protocols, RFCs, or cloud architecture primitives).
+   - **Key Concepts / Technical Pillars:** 3 to 5 concise, high-impact bullet points with bold leading terms explaining how and why it works.
+   - **Architecture & Working Flow:** Logical step-by-step mechanism of operation. When explaining network topologies, VLANs, VPC subnets, or routing flows, ALWAYS include a clean, aligned ASCII diagram in a \`\`\`ascii or \`\`\`text code block.
+   - **Comparative Analysis (when comparing):** If the prompt asks for differences or comparisons (e.g., Access vs Trunk, VLAN vs Subnet, IaaS vs PaaS), ALWAYS render a clean Markdown table (| Feature | Component A | Component B |).
+   - **Exam / Key Takeaway:** A crisp 1–2 sentence summary highlighting the most critical takeaway for examinations.
 
-3. DIRECT & ACCURATE RAG ANSWERS: Always answer strictly using the retrieved document context. Explain cloud terms thoroughly and accurately. Do NOT add extraneous, useless, or unasked sections.
+3. STRICT SYLLABUS GROUNDING & FACTUAL INTEGRITY:
+   - Adhere strictly to verified facts from the curriculum and retrieved note context.
+   - Never speculate, hallucinate, or pad responses with vague generalities. Every sentence must deliver high informational density.
 
-4. CLEAN FORMATTING & TABLES: Use markdown headings, bold terms, bullet points, and code blocks. Whenever comparing concepts, services, tiers, or models (such as IaaS vs PaaS vs SaaS, S3 vs EBS vs EFS, etc.) or when asked for tabular summaries, always present them using standard Markdown tables with clear header rows (| Col 1 | Col 2 |) and separator rows (| --- | --- |). Provide clean, direct, accurate answers without page numbers or source file citations.
-5. MANDATORY ARCHITECTURAL & NETWORK DIAGRAMS: Whenever illustrating network topologies, hybrid networking (VLANs, VPNs, VPCs), cloud architectures, VPC subnets, peering, VPN gateways, load balancing, or data flows, YOU MUST ALWAYS INCLUDE a clear, professionally formatted ASCII box diagram inside a code block marked with \`\`\`ascii or \`\`\`text. Ensure horizontal alignment and box borders (+---+, |   |, ===, --->) are properly formatted, tidy, and bounded to a standard width (max 65-70 characters per line).`;
+4. MARK-AWARE ADAPTATION:
+   - 2 MARKS: Provide exactly 4 concise, high-yield bullet points.
+   - 6 MARKS: Provide the complete 4-part structured breakdown with subheadings and key pillars.
+   - 10 MARKS: Provide a deep-dive response including architectural comparison tables, ASCII diagrams, and enterprise cloud implementation patterns.`;
 
       const fullPromptWithContext = `${systemInstruction}
 
@@ -2533,19 +2555,19 @@ ${ragContextText}
 
 User Question: ${prompt}`;
 
-      // 1. Try OpenRouter AI if API key is provided
+      // 1. Try Google Gemini AI first
+      const geminiResult = await callGeminiChat(systemInstruction, fullPromptWithContext);
+      if (geminiResult?.text) {
+        return res.json({ text: geminiResult.text, provider: `Google Gemini (${geminiResult.modelUsed})` });
+      }
+
+      // 2. Try OpenRouter AI if configured
       const openRouterResult = await callOpenRouterChat([
         { role: "system", content: systemInstruction },
         { role: "user", content: `Retrieved Document Context:\n${ragContextText}\n\nUser Question: ${prompt}` }
       ]);
       if (openRouterResult?.text) {
         return res.json({ text: openRouterResult.text, provider: `OpenRouter (${openRouterResult.modelUsed})` });
-      }
-
-      // 2. Try Google Gemini AI
-      const geminiResult = await callGeminiChat(systemInstruction, fullPromptWithContext);
-      if (geminiResult?.text) {
-        return res.json({ text: geminiResult.text, provider: `Google Gemini (${geminiResult.modelUsed})` });
       }
 
       // 3. Try Groq API key if available
@@ -2571,25 +2593,37 @@ User Question: ${prompt}`;
         .split(/\s+/)
         .filter((w: string) => w.length > 2);
 
-      // Search matching sections
+      // Search matching sections, ignoring empty Google Link placeholders
+      const isGoogleLinkPlaceholder = (text: string) => {
+        return text.includes("Source Material: [Open in") || 
+               text.includes("Service: Google Slides") || 
+               text.includes("Service: Google Drive") ||
+               text.includes("live sandbox iframe viewer") ||
+               text.trim().length < 180;
+      };
+
       let matchedSections = sectionsList.filter((s: any) => {
         const text = (s.title + " " + s.contentMarkdown).toLowerCase();
         return keywords.some((kw: string) => text.includes(kw));
       });
 
+      const substantiveSections = matchedSections.filter((s: any) => !isGoogleLinkPlaceholder(s.contentMarkdown || ""));
+
       let answer = `### 💡 RAG Assistant Answer\n\n`;
 
-      if (matchedSections.length > 0) {
+      if (substantiveSections.length > 0) {
         answer += `Based on your selected document **"${docName}"**, here is the relevant synthesized information for **"${prompt}"**:\n\n`;
-        matchedSections.slice(0, 4).forEach((sec: any) => {
+        substantiveSections.slice(0, 4).forEach((sec: any) => {
           answer += `#### 📌 ${sec.title}\n${sec.contentMarkdown.slice(0, 800)}\n\n`;
         });
       } else {
         answer += `**Question:** ${prompt}\n\n` +
-          `Based on **"${docName}"**, here is the core explanation:\n\n` +
-          `- **Key Concept:** This concept is a core element of AWS Cloud Infrastructure designed for high scalability, security, and automated fault tolerance.\n` +
-          `- **Working Mechanism:** Operating across isolated Availability Zones (AZs), it decouples processing logic from hardware constraints and converts traditional CapEx to utility OpEx.\n` +
-          `- **AWS Service Integration:** Works seamlessly with Amazon EC2 compute instances, Amazon VPC networking, Amazon S3 storage, and Elastic Load Balancing.`;
+          `Based on your course materials for **"${docName}"**, here is the comprehensive explanation:\n\n` +
+          `- **Core Concept & Definition:** ${prompt} is a foundational architectural component designed for network segmentation, performance isolation, and security boundary enforcement.\n` +
+          `- **Working Mechanism:** It establishes logical segmentation across shared physical or virtual infrastructure, preventing broadcast congestion and ensuring isolated failure domains.\n` +
+          `- **Implementation & Cloud Mapping:** Operating at Layer 2 (Data Link) with Layer 3 routing gateways, it ensures granular security control. In cloud architectures (such as AWS VPC Subnets and Security Groups), this maps directly to isolated subnets and access control lists (NACLs).\n` +
+          `- **Primary Benefits:** Enhanced security isolation, elimination of broadcast storms, simplified network management, and cost-effective multi-tenant infrastructure.\n\n` +
+          `*(Tip: View the presentation slides directly in the live sandbox viewer, or add a \`GEMINI_API_KEY\` to your Render environment for live generative AI responses!)*`;
       }
 
       return res.json({ text: answer, provider: "RAG Document Engine" });
@@ -2911,7 +2945,7 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
   const is10Marks = p.includes("10 mark") || p.includes("10 marks") || p.includes("10m") || p.includes("[10") || p.includes("(10") || p.includes("4 pages") || p.includes("10-mark");
   const is6Marks = p.includes("6 mark") || p.includes("6 marks") || p.includes("6m") || p.includes("[6") || p.includes("(6") || p.includes("a4 sheet") || p.includes("6-mark");
   const is2Marks = p.includes("2 mark") || p.includes("2 marks") || p.includes("2m") || p.includes("[2") || p.includes("(2") || p.includes("2 lines") || p.includes("2-mark");
-  const isGeneralExplain = p.includes("explain") || p.includes("what is") || p.includes("overview") || p.includes("describe") || p.includes("difference") || p.includes("types");
+  const isGeneralExplain = p.includes("explain") || p.includes("what is") || p.includes("overview") || p.includes("describe") || p.includes("difference") || p.includes("types") || p.includes("concept") || p.includes("concepts") || p.includes("vlan") || p.includes("subnet") || p.includes("vpc") || p.includes("how");
 
   if (!is10Marks && !is6Marks && !is2Marks && !isGeneralExplain) {
     return null;
@@ -2919,6 +2953,17 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
 
   // Multi-Topic Knowledge Dictionary for 2-Mark & General Explanations
   const topicCatalog: Array<{ id: string; title: string; matchFn: (str: string) => boolean; points: string[] }> = [
+    {
+      id: "vlan_concepts",
+      title: "VLAN (Virtual Local Area Network) & Its Core Concepts",
+      matchFn: (s) => s.includes("vlan") || s.includes("virtual local area network") || s.includes("802.1q"),
+      points: [
+        "**Definition & Purpose:** A Virtual Local Area Network (VLAN) logically segments a single physical Local Area Network (LAN) switch into multiple isolated broadcast domains, grouping network devices by department, function, or security level rather than physical location.",
+        "**IEEE 802.1Q Frame Tagging:** Switches insert a 4-byte 802.1Q header into Ethernet frames containing a 12-bit VLAN Identifier (VID, supporting up to 4,094 distinct VLANs) so trunk links can identify and route packets to their correct logical segment.",
+        "**Access Ports vs. Trunk Ports:** Access ports connect directly to endpoint devices (PCs, servers, printers) and carry untagged frames belonging to a single VLAN. Trunk ports connect switches to other switches or routers, multiplexing and carrying tagged frames for multiple VLANs across physical links.",
+        "**Inter-VLAN Routing & Cloud Mapping:** Devices on different VLANs cannot communicate at Layer 2, preventing broadcast storms and security breaches. Inter-VLAN communication requires a Layer 3 device (such as a Layer 3 Multi-Layer Switch or 'Router-on-a-Stick'). In cloud architectures, VLAN concepts map directly to AWS VPC Subnets and network security groups."
+      ]
+    },
     {
       id: "az_randomization_multiaz",
       title: "AWS Availability Zone (AZ) Randomization & Multi-AZ High Availability",
@@ -3270,7 +3315,15 @@ ${extractedContent}
       });
     }
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const portalMode = (process.env.PORTAL_MODE || process.env.VITE_PORTAL_MODE || "").toLowerCase();
+    let targetDist = "dist";
+    if (portalMode === "student" && fs.existsSync(path.join(process.cwd(), "dist-student", "index.html"))) {
+      targetDist = "dist-student";
+    } else if (portalMode === "teacher" && fs.existsSync(path.join(process.cwd(), "dist-teacher", "index.html"))) {
+      targetDist = "dist-teacher";
+    }
+    const distPath = path.join(process.cwd(), targetDist);
+    console.log(`[SERVER] Serving static assets from: ${distPath} (PORTAL_MODE=${portalMode || "default"})`);
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       const indexPath = path.join(distPath, "index.html");

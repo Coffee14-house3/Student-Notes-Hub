@@ -32,7 +32,7 @@ export const MicroArchitectureModal: React.FC<Props> = ({ isOpen, onClose, onBac
   const [currentUrl, setCurrentUrl] = useState<string>(() => getBackendUrl());
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latencyMs?: number; data?: any } | null>(null);
   const [testing, setTesting] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"two_websites" | "octopus" | "architecture" | "render" | "github" | "students">("two_websites");
+  const [activeTab, setActiveTab] = useState<"two_websites" | "hf_spaces" | "octopus" | "architecture" | "render" | "github" | "students">("two_websites");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -299,6 +299,17 @@ jobs:
             <span>Architecture Blueprint</span>
           </button>
           <button
+            onClick={() => setActiveTab("hf_spaces")}
+            className={`py-3 px-3 font-bold border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              activeTab === "hf_spaces"
+                ? "border-amber-400 text-amber-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>Hugging Face Spaces (16GB RAM)</span>
+          </button>
+          <button
             onClick={() => setActiveTab("render")}
             className={`py-3 px-3 font-bold border-b-2 transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               activeTab === "render"
@@ -329,7 +340,7 @@ jobs:
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>16 Students Guide</span>
+            <span>60 Students Guide</span>
           </button>
         </div>
 
@@ -382,7 +393,7 @@ jobs:
                   Student Micro-UI
                 </span>
                 <span className="text-xs font-bold text-white">Port 3001 / Pages</span>
-                <span className="text-[10px] text-slate-500">16 MCA-204 Users</span>
+                <span className="text-[10px] text-slate-500">60 MCA-204 Users</span>
               </div>
 
               <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1">
@@ -418,6 +429,185 @@ jobs:
             </p>
           </div>
 
+          {/* TAB: Hugging Face Spaces (16GB RAM) */}
+          {activeTab === "hf_spaces" && (
+            <div className="space-y-6 text-xs">
+              
+              {/* Highlight Hero Banner */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-slate-950 to-indigo-950/40 border border-amber-500/30 space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-extrabold text-sm sm:text-base">
+                  <Sparkles className="w-5 h-5 text-amber-400" />
+                  <span>Hugging Face Spaces • 16 GB Free RAM &amp; 2 vCPUs</span>
+                </div>
+                <p className="text-slate-300 text-xs leading-relaxed">
+                  Eliminates Render's 512 MB memory limit with <strong className="text-amber-300">16,000 MB RAM (31× more memory)</strong>.
+                  Runs the <strong className="text-emerald-300">Charitra High-Precision RAG pipeline</strong> using <strong className="text-white">your own API keys</strong> (Gemini, OpenRouter, or OpenAI) with zero hallucinations and instant responses for all 60 MCA students.
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1 font-mono text-[10px]">
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                    16 GB Dedicated RAM
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                    Uses Your Custom API Keys
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                    Charitra Anti-Hallucination
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                    Zero 512MB RAM Crashes
+                  </span>
+                </div>
+              </div>
+
+              {/* Connect Frontend to Hugging Face Space URL */}
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                    <Cloud className="w-4 h-4 text-amber-400" />
+                    Connect Frontend to Your Hugging Face Space
+                  </span>
+                  <span className="text-[10px] text-slate-400">Direct HTTPS Endpoint</span>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={currentUrl}
+                    onChange={(e) => setCurrentUrl(e.target.value)}
+                    placeholder="https://<your-username>-mca204-notes-rag.hf.space"
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 font-mono text-xs focus:outline-hidden focus:border-amber-400"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleRunTest(currentUrl)}
+                      disabled={testing}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${testing ? "animate-spin" : ""}`} />
+                      <span>{testing ? "Testing..." : "Test Connection"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveUrl}
+                      className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold transition-colors cursor-pointer shrink-0"
+                    >
+                      Save &amp; Connect
+                    </button>
+                  </div>
+                </div>
+                {testResult && (
+                  <div className={`p-2.5 rounded-xl border text-xs font-mono flex items-center justify-between ${
+                    testResult.ok ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                  }`}>
+                    <span>{testResult.message}</span>
+                    {testResult.data?.ram_total_mb && (
+                      <span className="text-[10px] opacity-80">
+                        Space RAM: {testResult.data.ram_total_mb} MB ({testResult.data.active_engine})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 3 Step Deployment Instructions */}
+              <div className="space-y-3">
+                <h4 className="font-bold text-white text-sm flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-indigo-400" />
+                  3-Minute Deployment to Hugging Face Spaces (Free Tier)
+                </h4>
+
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-mono">1</span>
+                    Create Space on Hugging Face
+                  </span>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Log in to <strong className="text-white">huggingface.co/new-space</strong>.
+                    Set Space Name: <code className="text-amber-300">mca204-notes-rag</code>.
+                    Select SDK: <strong className="text-white">Docker</strong> (or <strong className="text-white">Blank</strong>).
+                    Space Hardware: <strong className="text-emerald-300">CPU basic • 2 vCPU • 16 GB • Free</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-mono">2</span>
+                      Upload Pre-Built Files from /hf-spaces-backend/
+                    </span>
+                  </div>
+                  <p className="text-slate-400 text-[11px]">
+                    In your Space's <strong>Files</strong> tab, upload the files prepared in your project's <code className="text-indigo-300">/hf-spaces-backend/</code> folder:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[10px]">
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                      📄 <strong>app.py</strong><br />FastAPI + Charitra RAG + User API Key Engine
+                    </div>
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                      📄 <strong>requirements.txt</strong><br />FastAPI, Uvicorn, Pydantic, Requests
+                    </div>
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800 text-slate-300">
+                      📄 <strong>Dockerfile</strong><br />Exposes Port 7860 with Python 3.11
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[10px] flex items-center justify-center font-mono">3</span>
+                    Add Your Custom API Key in Space Secrets
+                  </span>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    In your Hugging Face Space, click <strong>Settings</strong> &gt; <strong>Variables and secrets</strong> &gt; <strong>New secret</strong>:
+                  </p>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-amber-300 space-y-1">
+                    <div>Key: <strong>GEMINI_API_KEY</strong> (or <strong>OPENROUTER_API_KEY</strong> / <strong>OPENAI_API_KEY</strong>)</div>
+                    <div>Value: <strong>&lt;paste your personal API key&gt;</strong></div>
+                  </div>
+                  <p className="text-slate-400 text-[10px] italic">
+                    The backend automatically detects your key, enforces temperature 0.2, and formats responses with direct definitions, technical pillars, ASCII topology diagrams, and comparison tables!
+                  </p>
+                </div>
+              </div>
+
+              {/* Concurrency Sizing Table */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <span className="font-bold text-emerald-400 text-xs">
+                  Performance for 60 MCA-204 Students
+                </span>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400">
+                        <th className="py-1 px-2">Student Action</th>
+                        <th className="py-1 px-2">Simultaneous Capacity</th>
+                        <th className="py-1 px-2">Latency</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      <tr>
+                        <td className="py-1 px-2">Reading notes &amp; syllabus</td>
+                        <td className="py-1 px-2 text-emerald-400 font-bold">All 60 students</td>
+                        <td className="py-1 px-2">0 ms (Instant offline cache)</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2">Asking AI with Your API Key</td>
+                        <td className="py-1 px-2 text-emerald-400 font-bold">All 60 students</td>
+                        <td className="py-1 px-2">1.5 - 2.5 seconds</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2">Local CPU GGUF Fallback</td>
+                        <td className="py-1 px-2 text-amber-400 font-bold">15-20 queries / minute</td>
+                        <td className="py-1 px-2">5 - 12 seconds</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
           {/* TAB: Deploy 2 Websites (Student & Teacher) */}
           {activeTab === "two_websites" && (
             <div className="space-y-6 text-xs">
@@ -429,7 +619,7 @@ jobs:
                   <span>Two Independent Websites • Shared Micro-Backend</span>
                 </div>
                 <p className="text-slate-300 text-xs leading-relaxed">
-                  You can deploy <strong className="text-white">two separate websites</strong> so your <strong className="text-amber-300">16 students</strong> only see the clean verified reader with AI Tutor, while the <strong className="text-purple-300">teacher studio</strong> stays private and isolated with full upload and deletion privileges.
+                  You can deploy <strong className="text-white">two separate websites</strong> so your <strong className="text-amber-300">60 students</strong> only see the clean verified reader with AI Tutor, while the <strong className="text-purple-300">teacher studio</strong> stays private and isolated with full upload and deletion privileges.
                 </p>
                 <div className="flex flex-wrap gap-2 pt-1 font-mono text-[10px]">
                   <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">

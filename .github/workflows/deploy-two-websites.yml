@@ -30,18 +30,20 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      # 1. Build Website 1: Dedicated Student Website (for 16 students)
+      # 1. Build Website 1: Dedicated Student Website (for 60 students)
       - name: Build Student Website (Default student view)
         env:
           VITE_PORTAL_MODE: student
-          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+          VITE_BACKEND_URL: ${{ vars.VITE_STUDENT_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_STUDENT_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-student-api.onrender.com' }}
+          VITE_STUDENT_BACKEND_URL: ${{ vars.VITE_STUDENT_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_STUDENT_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-student-api.onrender.com' }}
         run: npm run build:student
 
       # 2. Build Website 2: Dedicated Teacher Website (for instructor)
       - name: Build Teacher Website (Upload studio & note manager)
         env:
           VITE_PORTAL_MODE: teacher
-          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+          VITE_BACKEND_URL: ${{ vars.VITE_TEACHER_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_TEACHER_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-teacher-api.onrender.com' }}
+          VITE_TEACHER_BACKEND_URL: ${{ vars.VITE_TEACHER_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_TEACHER_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-teacher-api.onrender.com' }}
         run: npm run build:teacher
 
       # 3. Assemble dual directory structure for static hosting

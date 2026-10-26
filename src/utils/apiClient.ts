@@ -29,13 +29,29 @@ export function onBackendUrlChange(callback: (url: string) => void): () => void 
 }
 
 export function getBackendUrl(): string {
-  // 1. Build-time environment variable (e.g. set in GitHub Actions secret / env)
-  const envUrl = (import.meta as any).env?.VITE_BACKEND_URL || (import.meta as any).env?.VITE_API_URL;
-  if (envUrl && typeof envUrl === "string" && envUrl.trim()) {
-    return envUrl.trim().replace(/\/+$/, "");
+  // Determine if active portal context is teacher
+  const isTeacherPortal = typeof window !== "undefined" && (
+    (import.meta as any).env?.VITE_PORTAL_MODE === "teacher" ||
+    window.location.search.includes("portal=teacher") ||
+    window.location.pathname.includes("/teacher")
+  );
+
+  // 1. Build-time environment variable (Injected by GitHub Actions / Option B)
+  const envTeacherUrl = (import.meta as any).env?.VITE_TEACHER_BACKEND_URL;
+  const envStudentUrl = (import.meta as any).env?.VITE_STUDENT_BACKEND_URL;
+  const envCommonUrl = (import.meta as any).env?.VITE_BACKEND_URL || (import.meta as any).env?.VITE_API_URL;
+
+  if (isTeacherPortal && envTeacherUrl && typeof envTeacherUrl === "string" && envTeacherUrl.trim()) {
+    return envTeacherUrl.trim().replace(/\/+$/, "");
+  }
+  if (!isTeacherPortal && envStudentUrl && typeof envStudentUrl === "string" && envStudentUrl.trim()) {
+    return envStudentUrl.trim().replace(/\/+$/, "");
+  }
+  if (envCommonUrl && typeof envCommonUrl === "string" && envCommonUrl.trim()) {
+    return envCommonUrl.trim().replace(/\/+$/, "");
   }
 
-  // 2. User/Teacher runtime configuration in localStorage
+  // 2. User/Teacher runtime override in localStorage
   try {
     const custom = localStorage.getItem(STORAGE_KEY);
     if (custom && custom.trim()) {
@@ -43,9 +59,11 @@ export function getBackendUrl(): string {
     }
   } catch {}
 
-  // 3. Automated Discovery: on static hosting (GitHub Pages), route to live Render backend
+  // 3. Automated Discovery: on static hosting (GitHub Pages), route to respective Render backend
   if (isStaticHosting()) {
-    return "https://student-notes-api-jzex.onrender.com";
+    return isTeacherPortal
+      ? "https://mca204-teacher-api.onrender.com"
+      : "https://mca204-student-api.onrender.com";
   }
 
   // 4. Local dev / same-origin fallback

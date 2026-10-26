@@ -35,8 +35,10 @@ jobs:
 
       - name: Build Static Client
         env:
-          # Render Backend URL (Optional at build time, can also be configured dynamically in the app)
-          VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
+          # Injected at build time by GitHub Actions (Option B) with automated fallback
+          VITE_BACKEND_URL: ${{ vars.VITE_STUDENT_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_STUDENT_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-student-api.onrender.com' }}
+          VITE_STUDENT_BACKEND_URL: ${{ vars.VITE_STUDENT_BACKEND_URL || vars.VITE_BACKEND_URL || secrets.VITE_STUDENT_BACKEND_URL || secrets.VITE_BACKEND_URL || 'https://mca204-student-api.onrender.com' }}
+          VITE_TEACHER_BACKEND_URL: ${{ vars.VITE_TEACHER_BACKEND_URL || secrets.VITE_TEACHER_BACKEND_URL || 'https://mca204-teacher-api.onrender.com' }}
         run: npm run build
 
       - name: Setup Pages

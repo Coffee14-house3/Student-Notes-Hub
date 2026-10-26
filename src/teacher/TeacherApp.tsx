@@ -500,10 +500,10 @@ export const TeacherApp: React.FC<Props> = ({ isStandalone = true, onSwitchPorta
               }
             }}
             className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
-            title="Preview verified student reader for 16 students"
+            title="Preview verified student reader for 60 students"
           >
             <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
-            <span>{isStandalone ? "Preview Student View" : "Student Portal (16 Students)"}</span>
+            <span>{isStandalone ? "Preview Student View" : "Student Portal (60 Students)"}</span>
           </button>
 
           {activeView !== "dashboard" && (
