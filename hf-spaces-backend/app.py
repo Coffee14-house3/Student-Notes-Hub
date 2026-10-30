@@ -37,10 +37,13 @@ def get_user_gemini_key(header_key: Optional[str] = None) -> str:
 def get_user_openrouter_key(header_key: Optional[str] = None) -> str:
     return (header_key or os.environ.get("OPENROUTER_API_KEY") or "").strip()
 
+def get_user_groq_key(header_key: Optional[str] = None) -> str:
+    return (header_key or os.environ.get("GROQ_API_KEY") or os.environ.get("GROK_API_KEY") or "").strip()
+
 def get_user_openai_key(header_key: Optional[str] = None) -> str:
     return (header_key or os.environ.get("OPENAI_API_KEY") or "").strip()
 
-TARGET_MODEL = os.environ.get("MODEL_NAME", "gemini-2.0-flash")
+TARGET_MODEL = os.environ.get("MODEL_NAME", "gemini-3.8-flash")
 
 # ---------------------------------------------------------
 # In-Memory Storage for Notes (Fast 16 GB RAM caching)
@@ -211,19 +214,20 @@ class QueryResponse(BaseModel):
 # LLM Invocation with User API Key
 # ---------------------------------------------------------
 def call_user_gemini(api_key: str, prompt: str, context: str) -> Optional[str]:
-    """Calls Gemini REST API using the user's provided API key."""
+    """Calls Gemini REST API using the user's provided API key with Charitra context-bound prompt."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{TARGET_MODEL}:generateContent?key={api_key}"
     
-    cleaned_context = clean_chunk(context)
+    cleaned_context = clean_chunk(context) or "Core MCA Course Syllabus (VLANs, Networking, Cloud Architecture)"
     full_prompt = f"""{CHARITRA_SYSTEM_INSTRUCTION}
 
-COURSE CONTEXT:
+==================================================
+Context:
 {cleaned_context}
+==================================================
 
-STUDENT QUESTION:
-{prompt}
+Question: {prompt}
 
-Provide a structured, authoritative response:"""
+Instruction: Answer the question based on the context. Focus on relevant parts of the context and generate grounded, factual responses — avoiding any hallucinations."""
 
     payload = {
         "contents": [{"parts": [{"text": full_prompt}]}],
@@ -247,32 +251,102 @@ Provide a structured, authoritative response:"""
     return None
 
 def call_user_openrouter(api_key: str, prompt: str, context: str) -> Optional[str]:
-    """Calls OpenRouter REST API using the user's provided key."""
+    """Calls OpenRouter REST API with free-tier and standard model fallbacks."""
     url = "https://openrouter.ai/api/v1/chat/completions"
-    cleaned_context = clean_chunk(context)
+    cleaned_context = clean_chunk(context) or "Core MCA Course Syllabus (VLANs, Networking, Cloud Architecture)"
     
-    payload = {
-        "model": "meta-llama/llama-3-8b-instruct",
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": CHARITRA_SYSTEM_INSTRUCTION},
-            {"role": "user", "content": f"Context:\n{cleaned_context}\n\nQuestion:\n{prompt}"}
-        ]
-    }
-    try:
-        resp = requests.post(
-            url, 
-            json=payload, 
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=15
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            choices = data.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")
-    except Exception as e:
-        print(f"[LLM Error] OpenRouter API call failed: {e}")
+    user_content = f"""Context:
+{cleaned_context}
+
+Question: {prompt}
+
+Instruction: Answer the question based on the context. Focus on relevant parts of the context and generate grounded, factual responses — avoiding any hallucinations."""
+
+    candidate_models = [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "meta-llama/llama-3.3-70b-instruct",
+        "deepseek/deepseek-chat"
+    ]
+
+    for model in candidate_models:
+        payload = {
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": CHARITRA_SYSTEM_INSTRUCTION},
+                {"role": "user", "content": user_content}
+            ]
+        }
+        try:
+            resp = requests.post(
+                url, 
+                json=payload, 
+                headers={
+                    "Authorization": f"Bearer {api_key}", 
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://mca204.studyhub",
+                    "X-Title": "MCA-204 Study Notes Hub"
+                },
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+            else:
+                print(f"[OpenRouter Notice] Model {model} returned HTTP {resp.status_code}: {resp.text[:120]}")
+        except Exception as e:
+            print(f"[OpenRouter Exception] Model {model} failed: {e}")
+    return None
+
+def call_user_groq(api_key: str, prompt: str, context: str) -> Optional[str]:
+    """Calls Groq REST API using user key and modern Llama 3 models."""
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    cleaned_context = clean_chunk(context) or "Core MCA Course Syllabus (VLANs, Networking, Cloud Architecture)"
+
+    user_content = f"""Context:
+{cleaned_context}
+
+Question: {prompt}
+
+Instruction: Answer the question based on the context. Focus on relevant parts of the context and generate grounded, factual responses — avoiding any hallucinations."""
+
+    candidate_models = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "gemma2-9b-it",
+        "llama3-70b-8192"
+    ]
+
+    for model in candidate_models:
+        payload = {
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": CHARITRA_SYSTEM_INSTRUCTION},
+                {"role": "user", "content": user_content}
+            ]
+        }
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+            else:
+                print(f"[Groq Notice] Model {model} returned HTTP {resp.status_code}: {resp.text[:120]}")
+        except Exception as e:
+            print(f"[Groq Exception] Model {model} failed: {e}")
     return None
 
 # ---------------------------------------------------------
@@ -285,8 +359,9 @@ def health(x_api_key: Optional[str] = Header(None)):
     mem_free_mb = round(psutil.virtual_memory().available / (1024 * 1024)) if psutil else 16064
     user_gemini = bool(get_user_gemini_key(x_api_key))
     user_openrouter = bool(get_user_openrouter_key(x_api_key))
+    user_groq = bool(get_user_groq_key(x_api_key))
     
-    active_mode = "User Gemini Key" if user_gemini else ("User OpenRouter Key" if user_openrouter else "Curriculum Factual KB")
+    active_mode = "User Gemini Key" if user_gemini else ("User Groq Key" if user_groq else ("User OpenRouter Key" if user_openrouter else "Curriculum Factual KB"))
     
     return {
         "status": "ok",
@@ -310,6 +385,12 @@ def chat_endpoint(req: ChatRequest, x_api_key: Optional[str] = Header(None)):
         answer = call_user_gemini(gemini_key, user_prompt, req.context or "")
         if answer:
             return ChatResponse(text=answer, engine=f"Gemini API ({TARGET_MODEL})")
+
+    groq_key = get_user_groq_key(x_api_key)
+    if groq_key:
+        answer = call_user_groq(groq_key, user_prompt, req.context or "")
+        if answer:
+            return ChatResponse(text=answer, engine="Groq (Llama 3.3)")
             
     openrouter_key = get_user_openrouter_key(x_api_key)
     if openrouter_key:

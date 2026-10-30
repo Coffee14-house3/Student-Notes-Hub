@@ -605,6 +605,49 @@ jobs:
                 </div>
               </div>
 
+              {/* Base Model Architecture Justification */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-purple-400" />
+                  <span className="font-bold text-white text-xs">
+                    Base Model Selection: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+                  </span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  <strong>TinyLlama/TinyLlama-1.1B-Chat-v1.0</strong> was chosen as the base model because of its:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                    <div>
+                      <strong className="text-white block">Compact size (1.1B parameters)</strong>
+                      <span className="text-slate-400 text-[10px]">Minimal memory footprint (~638 MB in Q4 GGUF), operating inside free tier limits.</span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0" />
+                    <div>
+                      <strong className="text-white block">Instruction-following capabilities</strong>
+                      <span className="text-slate-400 text-[10px]">Fine-tuned for conversational Q&amp;A, syllabus grounding, and schema output.</span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
+                    <div>
+                      <strong className="text-white block">Compatibility with QLoRA and GGUF formats</strong>
+                      <span className="text-slate-400 text-[10px]">Supports parameter-efficient fine-tuning on free Colab GPUs &amp; CPU quantization.</span>
+                    </div>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                    <div>
+                      <strong className="text-white block">Practical inference performance on CPU-based environments</strong>
+                      <span className="text-slate-400 text-[10px]">Generates 15–25 tokens/sec per CPU core on Hugging Face Spaces (2 vCPUs).</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           )}
 

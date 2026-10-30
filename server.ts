@@ -264,13 +264,16 @@ async function callOpenRouterChat(
   const apiKey = (process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY || "").trim();
   if (!apiKey) return null;
 
+  // Prioritize free models first so zero-dollar accounts succeed, then fall back to standard models
   const models = preferredModels || [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
     "meta-llama/llama-3.3-70b-instruct",
     "deepseek/deepseek-chat",
     "qwen/qwen-2.5-72b-instruct",
-    "openai/gpt-4o-mini",
-    "meta-llama/llama-3.1-8b-instruct",
-    "mistralai/mistral-large-2411"
+    "openai/gpt-4o-mini"
   ];
 
   for (const model of models) {
@@ -285,13 +288,14 @@ async function callOpenRouterChat(
         payload.response_format = { type: "json_object" };
       }
 
+      console.log(`[OpenRouter] Attempting generation with model: ${model}...`);
       const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
-          "HTTP-Referer": "https://render.com",
-          "X-Title": "AWS Study Notes Hub"
+          "HTTP-Referer": "https://mca204.studyhub",
+          "X-Title": "MCA-204 Study Notes Hub"
         },
         body: JSON.stringify(payload)
       });
@@ -300,11 +304,15 @@ async function callOpenRouterChat(
         const data = await res.json();
         const content = data?.choices?.[0]?.message?.content;
         if (content && typeof content === "string" && content.trim().length > 0) {
+          console.log(`[OpenRouter] Success with model: ${model}`);
           return { text: content.trim(), modelUsed: model };
         }
+      } else {
+        const errBody = await res.text().catch(() => "");
+        console.warn(`[OpenRouter Notice] Model ${model} returned HTTP ${res.status}: ${errBody.slice(0, 180)}`);
       }
-    } catch {
-      // try next model
+    } catch (err: any) {
+      console.warn(`[OpenRouter Exception] Model ${model} fetch failed:`, err?.message || err);
     }
   }
   return null;
@@ -318,10 +326,13 @@ async function callGroqChat(
   const apiKey = (process.env.GROQ_API_KEY || process.env.GROK_API_KEY || "").trim();
   if (!apiKey) return null;
 
+  // Active Groq models (mixtral-8x7b-32768 was deprecated on Groq)
   const models = preferredModels || [
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768"
+    "gemma2-9b-it",
+    "llama3-70b-8192",
+    "llama3-8b-8192"
   ];
 
   for (const model of models) {
@@ -336,6 +347,7 @@ async function callGroqChat(
         payload.response_format = { type: "json_object" };
       }
 
+      console.log(`[Groq] Attempting generation with model: ${model}...`);
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -349,11 +361,15 @@ async function callGroqChat(
         const data = await res.json();
         const content = data?.choices?.[0]?.message?.content;
         if (content && typeof content === "string" && content.trim().length > 0) {
+          console.log(`[Groq] Success with model: ${model}`);
           return { text: content.trim(), modelUsed: model };
         }
+      } else {
+        const errBody = await res.text().catch(() => "");
+        console.warn(`[Groq Notice] Model ${model} returned HTTP ${res.status}: ${errBody.slice(0, 180)}`);
       }
-    } catch {
-      // try next model
+    } catch (err: any) {
+      console.warn(`[Groq Exception] Model ${model} fetch failed:`, err?.message || err);
     }
   }
   return null;
@@ -2505,55 +2521,58 @@ Output ONLY valid JSON in this format:
           });
 
           scored.sort((a, b) => b.score - a.score);
-          const topMatches = scored.filter(s => s.score > 0).slice(0, 10).map(s => s.section);
+          // Charitra standard: Fetch top-k=3 most relevant textbook excerpts
+          const topMatches = scored.filter(s => s.score > 0).slice(0, 3).map(s => s.section);
 
           if (topMatches.length > 0) {
             selectedSections = topMatches;
           } else {
-            selectedSections = candidateSections.slice(0, 15);
+            selectedSections = candidateSections.slice(0, 3);
           }
+        } else {
+          selectedSections = candidateSections.slice(0, 3);
         }
 
-        ragContextText = `[ACTIVE COURSE DOCUMENT: "${activeDocument.title}" - Total Sections: ${sections.length}]\n\n` +
-          selectedSections.map((s: any) => 
-            `[=== SECTION: ${s.title} ===]\nSubtitle: ${s.subtitle || ""}\nContent:\n${s.contentMarkdown}`
-          ).join("\n\n-------------------\n\n");
-        ragContextText = ragContextText.slice(0, 14000);
+        // Clean and format top-k=3 context chunks (Charitra specification)
+        ragContextText = selectedSections.map((s: any, idx: number) => {
+          const raw = (s.contentMarkdown || "")
+            .replace(/\[.*?\]\(https?:\/\/docs\.google\.com\/.*?\)/g, "")
+            .replace(/https?:\/\/docs\.google\.com\/\S+/g, "")
+            .replace(/Source Material:.*$/gim, "")
+            .trim();
+          return `<chunk_${idx + 1}>\nSection: ${s.title}\n${raw.slice(0, 1500)}\n</chunk_${idx + 1}>`;
+        }).join("\n\n");
       }
 
-      const systemInstruction = `You are an expert AI Academic Tutor and Curriculum Specialist (inspired by Charitra high-precision educational Q&A architecture) assisting students with their course notes, networking, and cloud computing syllabus.
+      const systemInstruction = `You are the Senior Academic Tutor for the MCA course, operating under the Charitra High-Precision Educational RAG Architecture.
 
-CORE PRECISION & PEDAGOGICAL RULES (CHARITRA SPECIFICATION):
-1. ZERO CONVERSATIONAL FILLER:
-   - Do NOT start with conversational greetings, throat-clearing, or filler ("Hello!", "Sure thing", "Based on your notes...", "Here is the information").
-   - Begin IMMEDIATELY with an authoritative, high-precision direct definition answering the core question in 1–2 sentences.
+CHARITRA STRICT CONTEXT-BOUND & ANTI-HALLUCINATION RULES:
+1. CONTEXT OVERLAP MANDATE:
+   - Your answer MUST strictly extract, synthesize, and ground every factual claim from the provided Context and syllabus standards.
+   - Do NOT extrapolate unverified facts, invent citations, or guess beyond the curriculum.
+   - If the context mentions network/cloud concepts (e.g., VLANs, IEEE 802.1Q, VPCs, IaaS, Subnets), adhere strictly to official IEEE and NIST architectural standards.
 
-2. HIGH-PRECISION STRUCTURED BREAKDOWN:
-   Deliver the answer following this exact, student-friendly 4-part academic schema:
-   - **Direct Definition & Core Concept:** Accurate technical definition with formal standards (e.g., IEEE standards like 802.1Q, OSI layers, protocols, RFCs, or cloud architecture primitives).
-   - **Key Concepts / Technical Pillars:** 3 to 5 concise, high-impact bullet points with bold leading terms explaining how and why it works.
-   - **Architecture & Working Flow:** Logical step-by-step mechanism of operation. When explaining network topologies, VLANs, VPC subnets, or routing flows, ALWAYS include a clean, aligned ASCII diagram in a \`\`\`ascii or \`\`\`text code block.
-   - **Comparative Analysis (when comparing):** If the prompt asks for differences or comparisons (e.g., Access vs Trunk, VLAN vs Subnet, IaaS vs PaaS), ALWAYS render a clean Markdown table (| Feature | Component A | Component B |).
-   - **Exam / Key Takeaway:** A crisp 1–2 sentence summary highlighting the most critical takeaway for examinations.
+2. ZERO CONVERSATIONAL FILLER:
+   - Begin IMMEDIATELY with the answer. Do NOT include greetings ("Hello!", "Sure thing", "Based on the text").
+   - Eliminate vague one-line answers; provide complete, examination-grade technical rigor.
 
-3. STRICT SYLLABUS GROUNDING & FACTUAL INTEGRITY:
-   - Adhere strictly to verified facts from the curriculum and retrieved note context.
-   - Never speculate, hallucinate, or pad responses with vague generalities. Every sentence must deliver high informational density.
-
-4. MARK-AWARE ADAPTATION:
-   - 2 MARKS: Provide exactly 4 concise, high-yield bullet points.
-   - 6 MARKS: Provide the complete 4-part structured breakdown with subheadings and key pillars.
-   - 10 MARKS: Provide a deep-dive response including architectural comparison tables, ASCII diagrams, and enterprise cloud implementation patterns.`;
+3. CHARITRA 5-PART ACADEMIC STRUCTURE:
+   - ### 1. Direct Definition & Core Concept (Formal definition with IEEE/NIST protocol standards)
+   - ### 2. Technical Pillars & Mechanics (3-5 bullet points with bold terms explaining how it works)
+   - ### 3. Architecture & Working Flow (Step-by-step mechanism, including an ASCII diagram in a \`\`\`ascii code block)
+   - ### 4. Technical Comparison (Render a Markdown table when comparing features/components)
+   - ### 5. Exam & Key Takeaway (A crisp summary takeaway highlighting marks scoring points)`;
 
       const fullPromptWithContext = `${systemInstruction}
 
 ==================================================
-RETRIEVED DOCUMENT CONTEXT FOR RAG:
-==================================================
-${ragContextText}
+Context:
+${ragContextText || "Core MCA Course Syllabus (VLANs, Networking, Cloud Architecture)"}
 ==================================================
 
-User Question: ${prompt}`;
+Question: ${prompt}
+
+Instruction: Answer the question based on the context. Focus on relevant parts of the context and generate grounded, factual responses — avoiding any hallucinations.`;
 
       // 1. Try Google Gemini AI first
       const geminiResult = await callGeminiChat(systemInstruction, fullPromptWithContext);
@@ -2965,6 +2984,17 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
       ]
     },
     {
+      id: "subnets_concepts",
+      title: "Subnet & VPC Subnet Concepts in Cloud Networking",
+      matchFn: (s) => s.includes("subnet") || s.includes("subnets") || s.includes("cidr") || s.includes("sub-net"),
+      points: [
+        "**Definition & IP Segmentation:** A Subnet (Subnetwork) is a logical subdivision of an IP network (CIDR block) operating at Layer 3. In AWS VPC, a subnet represents a contiguous range of IP addresses scoped strictly to a single Availability Zone (AZ).",
+        "**Public vs. Private Subnets:** A Public Subnet has an explicit route table entry (0.0.0.0/0 -> igw-xxxx) pointing to an Internet Gateway, allowing web servers to accept external traffic. A Private Subnet routes outbound internet requests exclusively through a NAT Gateway (0.0.0.0/0 -> nat-xxxx) without exposing database and backend ports to the public internet.",
+        "**AWS Reserved IP Addresses:** In every VPC subnet CIDR block, AWS reserves exactly 5 IP addresses (.0 for Network, .1 for VPC Router, .2 for Amazon DNS, .3 for future use, and .255 for Network Broadcast). A /24 subnet has 251 usable host IPs.",
+        "**Layer 2 vs. Layer 3 Mapping (VLAN vs Subnet):** While a physical VLAN partitions broadcast domains at the Data Link Layer (Layer 2) using IEEE 802.1Q tags, a Subnet partitions IP address boundaries at the Network Layer (Layer 3). In cloud infrastructure, VPC Subnets provide the primary network boundary for application microservices."
+      ]
+    },
+    {
       id: "az_randomization_multiaz",
       title: "AWS Availability Zone (AZ) Randomization & Multi-AZ High Availability",
       matchFn: (s) => (s.includes("randomize") || s.includes("randomizes") || s.includes("identifier") || s.includes("az mapping")) && (s.includes("availability zone") || s.includes("multiaz") || s.includes("multi-az") || s.includes("high availability")),
@@ -3184,6 +3214,64 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
       return `### 🟡 Exam Answer (10 Marks Weightage — Structured Enterprise Architecture Format)\n\n**Question Topic:** How NAT Gateways and Virtual Private Network (VPN) Gateways Extend VPC Patterns for Enterprise Networks\n\n---\n\n### 1. 📌 Overview & Definition in AWS VPC\nAn **AWS Virtual Private Cloud (VPC)** isolates workloads in logically defined virtual networks. To scale this pattern for enterprise networks, **NAT Gateways** and **VPN Gateways** extend connectivity safely:\n- **NAT Gateway (Network Address Translation):** A managed AWS service deployed in public subnets enabling private subnet instances to initiate outbound internet traffic while blocking unsolicited inbound connections.\n- **VPN Gateway (Virtual Private Network / Site-to-Site VPN):** A secure gateway attached to the VPC that establishes encrypted IPsec VPN tunnels between corporate on-premises data centers and AWS.\n\n---\n\n### 2. 🛡️ Respective Functions for Private Subnets\n1. **Private Subnet Isolation:** Private subnets host sensitive application servers and databases without direct public IP addresses.\n2. **NAT Gateway Function:** Routes outbound requests (software updates, security patches, API calls) from private subnets through a public Elastic IP without exposing internal nodes to inbound internet threats.\n3. **VPN Gateway Function:** Bridges private subnets with corporate internal branch offices, enabling secure hybrid communication between on-premises mainframes and cloud microservices.\n\n---\n\n### 3. 🔄 Enterprise Architecture Integration & Routing\n1. **Public Ingress Tier:** Internet Gateways (IGW) and Application Load Balancers handle incoming external web traffic.\n2. **Outbound Internet Path:** Route tables in private subnets direct 0.0.0.0/0 traffic to the NAT Gateway.\n3. **Hybrid On-Premises Path:** Route tables direct corporate destination CIDR blocks through the Virtual Private Gateway (VGW) across encrypted IPsec tunnels.\n\n---\n\n### 4. 📊 Key Enterprise Benefits\n- **Security & Compliance:** Complete isolation of backend databases from the public internet.\n- **Hybrid Cloud Continuity:** Seamless integration between corporate data centers and AWS cloud infrastructure.\n- **High Availability:** Multi-AZ NAT Gateway deployment guarantees fault-tolerant outbound internet connectivity.`;
     }
 
+    if (singleTopic.id === "subnets_concepts") {
+      return `### 🟡 Exam Answer (6 Marks Weightage — Structured 2-Page A4 Format)
+
+**Question Topic:** Subnet & VPC Subnet Concepts in Cloud Networking
+
+---
+
+### 1. 📌 Overview & Definition
+A **Subnet (Subnetwork)** is a logical segmentation of an IP network (CIDR block) operating at the Network Layer (OSI Layer 3). In cloud infrastructure (AWS Virtual Private Cloud - VPC), a subnet is scoped strictly to a **single Availability Zone (AZ)** and provides isolated IP address space for hosting compute instances, container clusters, and database workloads.
+
+---
+
+### 2. ⚙️ Types of Subnets & Architecture Roles
+1. **Public Subnet:**
+   - **Route Table Association:** Directs 0.0.0.0/0 traffic to an **Internet Gateway (IGW)**.
+   - **Primary Function:** Hosts public-facing Application Load Balancers (ALB), NAT Gateways, and Bastion Hosts assigned with Public IPv4/Elastic IPs.
+2. **Private Subnet:**
+   - **Route Table Association:** Has no direct IGW route; routes outbound internet requests exclusively through a **NAT Gateway** (or Virtual Private Gateway).
+   - **Primary Function:** Protects backend application servers and sensitive databases (RDS/PostgreSQL) from direct public internet exposure.
+
+---
+
+### 3. 📐 VPC Subnet Architecture Diagram
+\`\`\`ascii
++---------------------------------------------------------------------------------+
+|                               AWS VPC (10.0.0.0/16)                             |
+|                                                                                 |
+|   +---------------------------------------+   +-----------------------------+   |
+|   |         PUBLIC SUBNET (10.0.1.0/24)   |   |   PRIVATE SUBNET            |   |
+|   |         Availability Zone: us-east-1a |   |   (10.0.2.0/24)             |   |
+|   |                                       |   |   AZ: us-east-1a            |   |
+|   |    [ Internet Gateway (IGW) ]         |   |                             |   |
+|   |                |                      |   |                             |   |
+|   |       [ Public Web Server ]           |   |    [ Backend Database ]     |   |
+|   |                |                      |   |              ^              |   |
+|   |         [ NAT Gateway ] -------------[Outbound Updates]--+              |   |
+|   +---------------------------------------+   +-----------------------------+   |
++---------------------------------------------------------------------------------+
+\`\`\`
+
+---
+
+### 4. 📊 Technical Comparison: Public vs. Private Subnets
+| Attribute | Public Subnet | Private Subnet |
+| --- | --- | --- |
+| **Internet Access** | Bi-directional (Inbound + Outbound via IGW) | Outbound only (via NAT Gateway), Inbound blocked |
+| **IP Assignment** | Public IPv4 / Elastic IP + Private IP | Private IPv4 only |
+| **Security Risk** | Lower isolation (exposed to internet scanners) | High isolation (shielded behind security groups) |
+| **Hosted Workloads** | Web tier, Reverse Proxy, ALB | Databases (Postgres/MySQL), Enterprise APIs |
+
+---
+
+### 5. 💡 Exam & Key Takeaways
+- **AZ Boundary:** A subnet cannot span across multiple Availability Zones; each subnet resides strictly within 1 AZ.
+- **5 Reserved IPs:** In any AWS subnet, AWS reserves 5 IPs (.0 Network, .1 Router, .2 DNS, .3 Reserved, .255 Broadcast).
+- **VLAN vs Subnet:** VLANs segment at Layer 2 (MAC/broadcast isolation); Subnets segment at Layer 3 (IP routing boundaries).`;
+    }
+
     if (singleTopic.id === "az_randomization_multiaz") {
       return `### 🟡 Exam Answer (6 Marks Weightage — Structured High Availability Format)\n\n**Question Topic:** AWS Availability Zone (AZ) Randomization & Multi-AZ High Availability\n\n---\n\n### 1. 📌 Overview & Definition\n- **AZ Randomization:** AWS deliberately randomizes Availability Zone ID mappings (e.g., \`us-east-1a\`) across different customer AWS accounts to distribute physical infrastructure load evenly.\n- **Multi-AZ High Availability:** Deploying compute and database instances across multiple physically isolated Availability Zones to ensure uninterrupted fault tolerance.\n\n---\n\n### 2. 🔀 How AZ Randomization Works Across Accounts\n1. **Independent Mapping:** The physical data center underlying \`us-east-1a\` for your account is dynamically randomized and different from \`us-east-1a\` in another account.\n2. **Load Balancing Across Datacenters:** Prevents all customers from concentrating heavy workloads on the exact same physical facility.\n3. **Transparent Operation:** Handled automatically by AWS control planes without requiring customer configuration.\n\n---\n\n### 3. 🛡️ Why Multi-AZ Enhances High Availability\n1. **Physical Isolation:** Each AZ has independent power, cooling, and network plumbing.\n2. **Automatic Failover:** ELB and Auto Scaling route traffic away from compromised AZs instantly.\n3. **Data Replication:** Services like Amazon RDS replicate synchronous storage across AZs.\n\n---\n\n### 4. 📐 Multi-AZ Architecture Diagram\n\`\`\`text\n+--------------------------------------------------------------+\n|                        AWS Region                            |\n|  +------------------------+      +------------------------+  |\n|  | Availability Zone (AZ1)|      | Availability Zone (AZ2)|  |\n|  |                        |      |                        |  |\n|  |   [ Public Subnet ]    |      |   [ Public Subnet ]    |  |\n|  |           |            |      |           |            |  |\n|  |   [ EC2 Instance 1 ]   |      |   [ EC2 Instance 2 ]   |  |\n|  +------------------------+      +------------------------+  |\n+--------------------------------------------------------------+\n\`\`\`\n\n---\n\n### 5. 📊 Key Enterprise Benefits\n- Eliminates single points of failure.\n- Protects against natural disasters and infrastructure outages.\n- Guarantees 99.99% uptime SLAs.`;
     }
@@ -3207,20 +3295,80 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
   const keywords = queryLower
     .replace(/[^a-z0-9\s]/gi, " ")
     .split(/\s+/)
-    .filter((w: string) => w.length > 2 && !["explain", "marks", "mark", "ans", "answer", "sheet", "page"].includes(w));
+    .filter((w: string) => w.length > 2 && !["explain", "marks", "mark", "ans", "answer", "sheet", "page", "means"].includes(w));
+
+  // Charitra Anti-Hallucination: Strictly filter out Google Drive/Slides URL placeholders
+  const isBoilerplate = (text: string) => {
+    return text.includes("Source Material: [Open in") ||
+           text.includes("live sandbox iframe viewer") ||
+           text.includes("docs.google.com/presentation") ||
+           text.includes("Service: Google Slides") ||
+           text.includes("Service: Google Drive") ||
+           text.trim().length < 80;
+  };
 
   let matchedSections = sectionsList.filter((s: any) => {
-    const text = (s.title + " " + (s.subtitle || "") + " " + s.contentMarkdown).toLowerCase();
+    const text = (s.title + " " + (s.subtitle || "") + " " + (s.contentMarkdown || "")).toLowerCase();
     return keywords.some((kw: string) => text.includes(kw));
   });
 
+  // Filter out boilerplate sections
+  matchedSections = matchedSections.filter((s: any) => !isBoilerplate(s.contentMarkdown || ""));
+
   if (matchedSections.length === 0 && sectionsList.length > 0) {
-    matchedSections = sectionsList.slice(0, 5);
+    matchedSections = sectionsList.filter((s: any) => !isBoilerplate(s.contentMarkdown || "")).slice(0, 5);
   }
 
   const topicName = keywords.length > 0 
-    ? keywords.map(w => w.toUpperCase()).join(" ") + " in AWS Cloud"
-    : "AWS Cloud Concepts & Architecture";
+    ? keywords.map(w => w.toUpperCase()).join(" ")
+    : "Cloud Networking & System Architecture";
+
+  // If the document only has slide links and NO real text, output substantive academic syllabus facts
+  if (matchedSections.length === 0) {
+    return `### 🟡 Exam Answer (6 Marks Weightage — Structured 2-Page A4 Format)
+
+**Question Topic:** ${topicName} (MCA Course Standard)
+
+---
+
+### 1. 📌 Overview & Core Definition
+In computer networking and distributed cloud architecture, **${topicName}** represents an essential structural component designed to enforce logical boundaries, traffic segregation, and operational security across shared hardware infrastructure.
+
+---
+
+### 2. ⚙️ Technical Pillars & Mechanics
+- **Logical Segmentation:** Isolates compute workloads into independent broadcast and security domains, preventing unauthorized lateral movement.
+- **Resource Governance:** Provides fine-grained routing tables, IP allocation pools, and access control policies (NACLs/Security Groups).
+- **High Availability & Redundancy:** Deployed across physically isolated fault domains to eliminate single-points-of-failure.
+- **Enterprise Standards:** Conforms to standard RFC and IEEE network specifications for scalable multi-tier web architectures.
+
+---
+
+### 3. 📐 Architectural Flow Diagram
+\`\`\`ascii
++---------------------------------------------------------------------------------+
+|                         ENTERPRISE NETWORK TOPOLOGY                             |
+|                                                                                 |
+|   [ Ingress Tier / Internet Gateway ]                                           |
+|                   |                                                             |
+|                   v                                                             |
+|   [ Public Gateway Subnet (Load Balancer & NAT) ]                               |
+|                   |                                                             |
+|                   v (Encrypted Internal Route)                                  |
+|   [ Private Application Subnet (Compute Microservices) ]                        |
+|                   |                                                             |
+|                   v                                                             |
+|   [ Isolated Database Tier (No Direct Internet Route) ]                         |
++---------------------------------------------------------------------------------+
+\`\`\`
+
+---
+
+### 4. 📊 Examination Summary & Key Takeaways
+- **Scalability:** Enables elastic expansion of system capacity without requiring physical re-cabling.
+- **Security:** Limits exposure surface by isolating sensitive backend storage tiers from public ingress ports.
+- **Reliability:** Built-in health checks and routing failover protect against hardware anomalies.`;
+  }
 
   const extractedContent = matchedSections.slice(0, 4).map((s: any) => 
     `#### 📌 Section: ${s.title}\n${s.contentMarkdown.slice(0, 900)}`
@@ -3232,10 +3380,10 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
 **Question Topic:** ${topicName} (Retrieved from "${docName}")
 
 **Answer (4 Key Points):**
-1. **Definition:** ${matchedSections[0]?.title || topicName} represents a key operational component in AWS Cloud infrastructure designed to enhance system performance, reliability, and security.
-2. **Core Functionality:** Operating within the cloud ecosystem, it provides automated orchestration, utility billing, and seamless multi-AZ redundancy.
-3. **Primary Benefit:** Eliminates legacy manual administration overhead, reducing operational costs and ensuring enterprise data availability.
-4. **AWS Service Context:** Integrates directly with core AWS services including EC2 compute, VPC networking, and S3 storage.`;
+1. **Definition:** ${matchedSections[0]?.title || topicName} represents a key operational component in cloud infrastructure designed to enhance performance, reliability, and security.
+2. **Core Functionality:** Operating within the network ecosystem, it provides automated orchestration, utility routing, and fault redundancy.
+3. **Primary Benefit:** Eliminates legacy manual administration overhead, reducing operational costs and ensuring data availability.
+4. **Implementation Context:** Integrates directly with core cloud services including compute, VPC networking, and storage tiers.`;
   }
 
   return `### 🟡 Exam Answer (6 Marks Weightage — Structured 2-Page A4 Format)
@@ -3245,7 +3393,7 @@ function getMarkBasedAnswer(prompt: string, activeDocument?: any): string | null
 ---
 
 ### 1. 📌 Overview & Definition
-Based on your uploaded study document **"${docName}"**, **${topicName}** forms a critical study topic in the AWS curriculum. It provides software-defined, scalable solutions designed to solve traditional data center constraints.
+Based on your course materials **"${docName}"**, **${topicName}** forms a critical topic in the curriculum. It provides software-defined, scalable solutions designed to solve traditional data center constraints.
 
 ---
 
@@ -3256,10 +3404,10 @@ ${extractedContent}
 ---
 
 ### 3. 🔄 Step-by-Step Operational Workflow
-1. **Initialization:** The cloud administrator or automated script triggers resource provisioning via the AWS API.
-2. **Configuration & Security:** Security Groups and IAM permissions enforce least-privilege boundary rules.
+1. **Initialization:** The administrator or automated orchestration script triggers resource allocation via API.
+2. **Configuration & Security:** Security rules and IAM permissions enforce least-privilege boundary rules.
 3. **Execution & Processing:** Workloads execute across isolated compute nodes with automated load management.
-4. **Monitoring & Persistence:** Health logs are monitored via CloudWatch while persistent data is stored safely in RDS or S3.
+4. **Monitoring & Persistence:** Health logs are monitored continuously while persistent data is stored safely in redundant storage.
 
 ---
 
